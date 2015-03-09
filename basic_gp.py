@@ -17,9 +17,12 @@ def loaddata(filename):
     Y = data[:,1:]
     return X, Y
 
+def normalize_data(X):
+    return (X - np.mean(X)) / np.std(X)
+
 # Returns tuple (a, b) of scores, indicating the strength of x --> y causality
 # and y --> x causality, respectively.
-def gp(X, Y):
+def gp(X, Y, nugget=1e-6):
     # add some noise
     X = X + np.random.normal(size=X.shape) * 1e-6
     Y = Y + np.random.normal(size=Y.shape) * 1e-6
@@ -27,22 +30,24 @@ def gp(X, Y):
     y = Y.ravel()
     x_lin = np.linspace(np.amin(x), np.amax(x), 1000)
     y_lin = np.linspace(np.amin(y), np.amax(y), 1000)
-    gp = gaussian_process.GaussianProcess(nugget=1e-6)
+    gp = gaussian_process.GaussianProcess(nugget=nugget) 
     pl.figure()
 
     gp.fit(X, y)
     y_shade, y_mse = gp.predict(x_lin.reshape((1000, 1)), eval_MSE=True)
+    y_sigma = np.sqrt(y_mse)
     y_pred = gp.predict(X)
     pl.subplot(211)
     pl.plot(x, y, 'bo')
-    pl.fill_between(x_lin, y_shade - 1.96 * y_mse, y_shade + 1.96 * y_mse, facecolor='blue', alpha=0.5)
+    pl.fill_between(x_lin, y_shade - 1.96 * y_sigma, y_shade + 1.96 * y_sigma, facecolor='blue', alpha=0.5)
 
     gp.fit(Y, x)
     x_shade, x_mse = gp.predict(y_lin.reshape((1000, 1)), eval_MSE=True)
+    x_sigma = np.sqrt(x_mse)
     x_pred = gp.predict(Y)
     pl.subplot(212)
     pl.plot(y, x, 'bo')
-    pl.fill_between(y_lin, x_shade - 1.96 * x_mse, x_shade + 1.96 * x_mse, facecolor='blue', alpha=0.5)
+    pl.fill_between(y_lin, x_shade - 1.96 * x_sigma, x_shade + 1.96 * x_sigma, facecolor='blue', alpha=0.5)
 
     pl.show()
     a = calc_MI(x, y_pred - y, 20)
