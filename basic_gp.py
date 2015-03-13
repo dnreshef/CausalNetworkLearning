@@ -1,11 +1,12 @@
 import numpy as np
 import sys
-from sklearn import gaussian_process
-from matplotlib import pyplot as pl
+import GPy
+import pylab
 from sklearn.metrics import mutual_info_score
 
 # Calculate mutual information
-def calc_MI(x, y, bins):
+def calc_MI(x, y):
+    bins = np.floor(np.sqrt(len(x)) / 2)
     c_xy = np.histogram2d(x, y, bins)[0]
     mi = mutual_info_score(None, None, contingency=c_xy)
     return mi
@@ -17,46 +18,51 @@ def loaddata(filename):
     Y = data[:,1:]
     return X, Y
 
+# Returns an array containing the z-scores of the original data.
 def normalize_data(X):
     return (X - np.mean(X)) / np.std(X)
 
+# Computes the q-th percentile for the pairwise euclidean distances in X.
+def edistance_at_percentile(X, q):
+    distances = []
+    for i in xrange(1000):
+        pair = np.random.choice(X, 2)
+        distances.append(abs(pair[1] - pair[0]))
+    distances.sort()
+    return distances[q*10]
+
 # Returns tuple (a, b) of scores, indicating the strength of x --> y causality
 # and y --> x causality, respectively.
-def gp(X, Y, nugget=1e-6):
+def gp(X, Y, filename):
     # add some noise
-    X = X + np.random.normal(size=X.shape) * 1e-6
-    Y = Y + np.random.normal(size=Y.shape) * 1e-6
     x = X.ravel()
     y = Y.ravel()
-    x_lin = np.linspace(np.amin(x), np.amax(x), 1000)
-    y_lin = np.linspace(np.amin(y), np.amax(y), 1000)
-    gp = gaussian_process.GaussianProcess(nugget=nugget) 
-    pl.figure()
+    x_lim = (np.amin(x), np.amax(x))
+    y_lim = (np.amin(y), np.amax(y))
+    x_model = GPy.models.GPRegression(X, Y)
+    y_model = GPy.models.GPRegression(Y, X)
+    x_model.kern.lengthscale = edistance_at_percentile(x, 50)
+    y_model.kern.lengthscale = edistance_at_percentile(y, 50)
 
-    gp.fit(X, y)
-    y_shade, y_mse = gp.predict(x_lin.reshape((1000, 1)), eval_MSE=True)
-    y_sigma = np.sqrt(y_mse)
-    y_pred = gp.predict(X)
-    pl.subplot(211)
-    pl.plot(x, y, 'bo')
-    pl.fill_between(x_lin, y_shade - 1.96 * y_sigma, y_shade + 1.96 * y_sigma, facecolor='blue', alpha=0.5)
+    #x_model.optimize('bfgs', max_iters=10)
+    x_model.plot(plot_limits=x_lim)
+    pylab.savefig(filename + 'xy.png')
+    #y_model.optimize('bfgs', max_iters=10)
+    y_model.plot(plot_limits=y_lim)
+    pylab.savefig(filename + 'yx.png')
 
-    gp.fit(Y, x)
-    x_shade, x_mse = gp.predict(y_lin.reshape((1000, 1)), eval_MSE=True)
-    x_sigma = np.sqrt(x_mse)
-    x_pred = gp.predict(Y)
-    pl.subplot(212)
-    pl.plot(y, x, 'bo')
-    pl.fill_between(y_lin, x_shade - 1.96 * x_sigma, x_shade + 1.96 * x_sigma, facecolor='blue', alpha=0.5)
+    y_resid = x_model.predict(X)[0].ravel() - y
+    x_resid = y_model.predict(Y)[0].ravel() - x
+    var_xy = np.var(y_resid)
+    var_yx = np.var(x_resid)
+    MI_xy = calc_MI(x, y_resid)
+    MI_yx = calc_MI(y, x_resid)
+    NLL_xy = -x_model.log_likelihood()
+    NLL_yx = -y_model.log_likelihood()
+    return var_xy, var_yx, MI_xy, MI_yx, NLL_xy, NLL_yx
 
-    pl.show()
-    a = calc_MI(x, y_pred - y, 20)
-    b = calc_MI(y, x_pred - x, 20)
-    return a, b
-
-correct = 0
 # Process all data from cause-effect database
-with open('results/scores.txt', 'w') as f:
+with open('results/scores.csv', 'w') as f:
     filenum = 1
     filenum2 = 89
     if len(sys.argv) >= 2:
@@ -65,14 +71,16 @@ with open('results/scores.txt', 'w') as f:
             filenum2 = int(sys.argv[2])
         else:
             filenum2 = filenum + 1
+    f.write('fileno,var_xy,var_yx,MI_xy,MI_yx,NLL_xy,NLL_yx,var_xy_norm,' +
+        'var_yx_norm,MI_xy_norm,MI_yx_norm,NLL_xy_norm,NLL_yx_norm\n')
     for i in xrange(filenum, filenum2):
         filename = 'pair00%02d.txt' % (i,)
-        a, b = gp(*loaddata(filename))
-
-        if a > b:
-            correct += 1
-        print correct
+        X, Y = loaddata(filename)
+        X_norm, Y_norm = normalize_data(X), normalize_data(Y)
+        scores = gp(X, Y, 'results/%02d' % (i,))
+        scores_norm = gp(X_norm, Y_norm, 'results/%02dnorm' % (i,))
         print filename
-        print 'x --> y: %s' % (a,)
-        print 'x <-- y: %s' % (b,)
-        f.write('%d %s %s\n' % (i, a, b))
+        print 'x --> y: %s %s' % (scores[2], scores_norm[2])
+        print 'x <-- y: %s %s' % (scores[3], scores_norm[3])
+        tup = (i,) + scores + scores_norm
+        f.write('%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' % tup)
