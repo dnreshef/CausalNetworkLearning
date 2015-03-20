@@ -2,6 +2,7 @@ import numpy as np
 import sys
 import GPy
 import pylab
+import time
 from sklearn.metrics import mutual_info_score
 
 # Calculate mutual information
@@ -13,7 +14,7 @@ def calc_MI(x, y):
 
 # Returns tuple (X, Y) of data parsed from cause-effect database.
 def loaddata(filename):
-    data = np.loadtxt('data/' + filename)
+    data = np.loadtxt("data/" + filename)
     X = data[:,:1]
     Y = data[:,1:]
     return X, Y
@@ -26,15 +27,17 @@ def normalize_data(X):
 def edistance_at_percentile(X, q):
     distances = []
     for i in xrange(1000):
-        pair = np.random.choice(X, 2)
-        distances.append(abs(pair[1] - pair[0]))
+        a = np.random.choice(X)
+        b = np.random.choice(X)
+        distances.append(abs(a - b))
     distances.sort()
     return distances[q*10]
 
 # Returns tuple (a, b) of scores, indicating the strength of x --> y causality
 # and y --> x causality, respectively.
-def gp(X, Y, filename):
-    # add some noise
+def gp(X, Y, filename, timing=False):
+    a = time.time()
+
     x = X.ravel()
     y = Y.ravel()
     x_lim = (np.amin(x), np.amax(x))
@@ -44,12 +47,22 @@ def gp(X, Y, filename):
     x_model.kern.lengthscale = edistance_at_percentile(x, 50)
     y_model.kern.lengthscale = edistance_at_percentile(y, 50)
 
-    #x_model.optimize('bfgs', max_iters=10)
+    b = time.time()
+
+    x_model.optimize("bfgs", max_iters=100)
+
+    c = time.time()
+
     x_model.plot(plot_limits=x_lim)
-    pylab.savefig(filename + 'xy.png')
-    #y_model.optimize('bfgs', max_iters=10)
+    pylab.savefig(filename + "xy.png")
+
+    d = time.time()
+
+    y_model.optimize("bfgs", max_iters=100)
     y_model.plot(plot_limits=y_lim)
-    pylab.savefig(filename + 'yx.png')
+    pylab.savefig(filename + "yx.png")
+
+    e = time.time()
 
     y_resid = x_model.predict(X)[0].ravel() - y
     x_resid = y_model.predict(Y)[0].ravel() - x
@@ -59,10 +72,15 @@ def gp(X, Y, filename):
     MI_yx = calc_MI(y, x_resid)
     NLL_xy = -x_model.log_likelihood()
     NLL_yx = -y_model.log_likelihood()
+
+    f = time.time()
+    if timing:
+        print "setup: %f\noptimize: %f\nplot: %f\nreverse: %f\nscore: %f" %\
+        (b-a,c-b,d-c,e-d,f-e)
     return var_xy, var_yx, MI_xy, MI_yx, NLL_xy, NLL_yx
 
 # Process all data from cause-effect database
-with open('results/scores.csv', 'w') as f:
+with open("results/scores_full.csv", "w") as f:
     filenum = 1
     filenum2 = 89
     if len(sys.argv) >= 2:
@@ -71,16 +89,25 @@ with open('results/scores.csv', 'w') as f:
             filenum2 = int(sys.argv[2])
         else:
             filenum2 = filenum + 1
-    f.write('fileno,var_xy,var_yx,MI_xy,MI_yx,NLL_xy,NLL_yx,var_xy_norm,' +
-        'var_yx_norm,MI_xy_norm,MI_yx_norm,NLL_xy_norm,NLL_yx_norm\n')
+    f.write("fileno,var_xy,var_yx,MI_xy,MI_yx,NLL_xy,NLL_yx,var_xy_norm," +
+        "var_yx_norm,MI_xy_norm,MI_yx_norm,NLL_xy_norm,NLL_yx_norm\n")
     for i in xrange(filenum, filenum2):
-        filename = 'pair00%02d.txt' % (i,)
+        if i == 47:
+            print "pair0047.txt is too hard\n"
+            continue
+        filename = "pair00%02d.txt" % (i,)
         X, Y = loaddata(filename)
+        if X.size > 2000:
+            print "Size of file %d too big (%d)\n" % (i, X.size)
+            continue
+        if Y.shape[1] > 1:
+            print "File %d has multidimensional data\n" % (i,)
+            continue
+        print "Running GP on %s, %d data points" % (filename, Y.size)
         X_norm, Y_norm = normalize_data(X), normalize_data(Y)
-        scores = gp(X, Y, 'results/%02d' % (i,))
-        scores_norm = gp(X_norm, Y_norm, 'results/%02dnorm' % (i,))
-        print filename
-        print 'x --> y: %s %s' % (scores[2], scores_norm[2])
-        print 'x <-- y: %s %s' % (scores[3], scores_norm[3])
+        scores = gp(X, Y, "results/%02d" % (i,))
+        scores_norm = gp(X_norm, Y_norm, "results/%02dnorm" % (i,))
+        print "x --> y: %s %s" % (scores[2], scores_norm[2])
+        print "x <-- y: %s %s\n" % (scores[3], scores_norm[3])
         tup = (i,) + scores + scores_norm
-        f.write('%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' % tup)
+        f.write("%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % tup)

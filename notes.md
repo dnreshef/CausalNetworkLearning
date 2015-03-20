@@ -21,3 +21,14 @@ Meeting Notes
 - output 6 column table. {var, MI, log likelihood} x {no change, normalized}. save plots
 - for MI, use sqrt(n)/2 x sqrt(n)/2 bins
 
+### 3/13/2015
+- run optimize on sets with <= x points where x is max computationally feasible
+- find bottleneck
+- try to plot accuracy vs number of decisions ranked
+- investigate why error margins differ for un-normalized data. make sure to optimize
+- look at wrong examples and explain why they are wrong
+
+### 3/20/2015
+- Pick best bandwidth between 10, 50, 90 for both directions independently
+- If MI most promising, try to estimate it better
+- Use David's better measure of dependence by calling java exe
