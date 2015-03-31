@@ -32,3 +32,9 @@ Meeting Notes
 - Pick best bandwidth between 10, 50, 90 for both directions independently
 - If MI most promising, try to estimate it better
 - Use David's better measure of dependence by calling java exe
+
+### 3/27/2015
+- Change lengthscale to use squared values of euclidean distance
+- Increase threshold to 5000 data points
+- Start using TIC
+- Set var parameter for kern as var of y data, stop running on normalized(?)
