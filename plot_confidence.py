@@ -21,8 +21,8 @@ def plot_confidence(X, Y, truths):
     plt.ylim([0,1])
     plt.show()
 
-data = np.loadtxt(open("/Users/georgedu/Dropbox/Dave and George Shared/results/scores.csv","rb"),delimiter=",",skiprows=1)
+data = np.loadtxt(open("/Users/georgedu/Dropbox/Dave and George Shared/results/scores_test.csv","rb"),delimiter=",",skiprows=1)
 with open("data/truths.txt") as f:
     truths = [line.rstrip() for line in f]
-for i in xrange(6):
+for i in xrange(8):
     plot_confidence(data[:,[2*i+1]].ravel(), data[:,[2*i+2]].ravel(), truths)

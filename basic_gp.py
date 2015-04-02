@@ -50,10 +50,10 @@ def gp(X, Y, filename=None, bandwidth=50, bfgs_iters=100):
     y = Y.ravel()
     x_lim = (np.amin(x), np.amax(x))
     y_lim = (np.amin(y), np.amax(y))
-    x_model = GPy.models.GPRegression(X, Y)
-    y_model = GPy.models.GPRegression(Y, X)
-    x_model.kern.lengthscale = edistance_at_percentile(x, bandwidth)
-    y_model.kern.lengthscale = edistance_at_percentile(y, bandwidth)
+    xkern = GPy.kern.RBF(1, variance=np.var(y), lengthscale=edistance_at_percentile(x, bandwidth))
+    ykern = GPy.kern.RBF(1, variance=np.var(x), lengthscale=edistance_at_percentile(y, bandwidth))
+    x_model = GPy.models.GPRegression(X, Y, kernel=xkern)
+    y_model = GPy.models.GPRegression(Y, X, kernel=ykern)
 
     b = time.time()
 
@@ -83,8 +83,14 @@ def gp(X, Y, filename=None, bandwidth=50, bfgs_iters=100):
     subprocess.call(["java", "-jar", "MINE_2014_11_10.jar", "data_file.csv", "-adjacentPairs", "exp=0.7", "c=5"])
     with open("DNE,data_file.csv,adjacentpairs,cv=0.0,B=n^0.7,Results.csv", "r") as f:
         f.readline()
-        MIC_yx = float(f.readline().split(",")[2])
-        MIC_xy = float(f.readline().split(",")[2])
+        line1 = f.readline().split(",")
+        line2 = f.readline().split(",")
+        if line1[0] == "X":
+            MIC_xy = float(line1[2])
+            MIC_yx = float(line2[2])
+        else:
+            MIC_xy = float(line2[2])
+            MIC_yx = float(line1[2])
     os.remove("DNE,data_file.csv,adjacentpairs,cv=0.0,B=n^0.7,Results.csv")
     os.remove("data_file.csv")
 
