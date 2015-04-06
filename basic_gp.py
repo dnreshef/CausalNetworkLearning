@@ -31,14 +31,13 @@ def normalize_data(X):
 
 # Computes the q-th percentile for the pairwise euclidean distances in X.
 def edistance_at_percentile(X, q):
-    return 1
     distances = []
     for i in xrange(10000):
         a = np.random.choice(X)
         b = np.random.choice(X)
-        distances.append((a - b) ** 2)
+        distances.append(abs(a - b))
     distances.sort()
-    for i in xrange(q*10, 10000):
+    for i in xrange(q*100, 10000):
         if distances[i] > 0:
             return distances[i]
 
@@ -51,8 +50,8 @@ def gp(X, Y, filename=None, bandwidth=50, bfgs_iters=100):
     y = Y.ravel()
     x_lim = (np.amin(x), np.amax(x))
     y_lim = (np.amin(y), np.amax(y))
-    xkern = GPy.kern.RBF(1, variance=np.var(y), lengthscale=edistance_at_percentile(x, bandwidth))
-    ykern = GPy.kern.RBF(1, variance=np.var(x), lengthscale=edistance_at_percentile(y, bandwidth))
+    xkern = GPy.kern.RBF(1, variance=1, lengthscale=edistance_at_percentile(x, bandwidth))
+    ykern = GPy.kern.RBF(1, variance=1, lengthscale=edistance_at_percentile(y, bandwidth))
     x_model = GPy.models.GPRegression(X, Y, kernel=xkern)
     y_model = GPy.models.GPRegression(Y, X, kernel=ykern)
 
@@ -126,7 +125,7 @@ for i in xrange(filenum, filenum2):
         continue
     filename = "pair00%02d.txt" % (i,)
     X, Y = loaddata(filename)
-    if X.size > 5000:
+    if X.size > 2000:
         print "Size of file %d too big (%d)\n" % (i, X.size)
         continue
     if Y.shape[1] > 1:
@@ -134,6 +133,7 @@ for i in xrange(filenum, filenum2):
         continue
     print "Running GP on %s, %d data points" % (filename, Y.size)
     X_norm, Y_norm = normalize_data(X), normalize_data(Y)
+    print np.var(X), np.var(Y)
     scores = gp_bandwidths(X, Y, prefix + "%02d" % (i,))
     scores_norm = gp_bandwidths(X_norm, Y_norm, prefix + "%02dnorm" % (i,))
     #print "x --> y (MI): %s" % (scores[2],)
