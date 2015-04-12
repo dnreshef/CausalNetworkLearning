@@ -5,6 +5,7 @@ import pylab
 import time
 import subprocess
 import os
+import gc
 from sklearn.metrics import mutual_info_score
 
 # Constants
@@ -109,7 +110,7 @@ def gp_bandwidths(X, Y, filename):
 
 # Process all data from cause-effect database
 with open(prefix + "scores_test.csv", "a") as f:
-    f.write("fileno,var_xy,var_yx,MI_xy,MI_yx,NLL_xy,NLL_yx,MIC_xy,MIC_yx,var_xy_norm" +
+    f.write("fileno,var_xy,var_yx,MI_xy,MI_yx,NLL_xy,NLL_yx,MIC_xy,MIC_yx,var_xy_norm," +
         "var_yx_norm,MI_xy_norm,MI_yx_norm,NLL_xy_norm,NLL_yx_norm,MIC_xy_norm,MIC_yx_norm\n")
 filenum = 1
 filenum2 = 89
@@ -125,7 +126,7 @@ for i in xrange(filenum, filenum2):
         continue
     filename = "pair00%02d.txt" % (i,)
     X, Y = loaddata(filename)
-    if X.size > 2000:
+    if X.size > 5000:
         print "Size of file %d too big (%d)\n" % (i, X.size)
         continue
     if Y.shape[1] > 1:
@@ -136,8 +137,7 @@ for i in xrange(filenum, filenum2):
     print np.var(X), np.var(Y)
     scores = gp_bandwidths(X, Y, prefix + "%02d" % (i,))
     scores_norm = gp_bandwidths(X_norm, Y_norm, prefix + "%02dnorm" % (i,))
-    #print "x --> y (MI): %s" % (scores[2],)
-    #print "x <-- y (MI): %s\n" % (scores[3],)
     output = [i] + scores + scores_norm
     with open(prefix + "scores_test.csv", "a") as f:
         f.write("%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % tuple(output))
+    print "Garbage collected " + str(gc.collect())
