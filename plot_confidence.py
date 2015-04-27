@@ -20,8 +20,8 @@ def plot_confidence(indices, X, Y, truths, suffix):
     plt.xlabel("Decision Rate")
     plt.ylabel("Accuracy")
     plt.ylim([0,1])
-    plt.show()
-    #plt.savefig(prefix + suffix)
+    #plt.show()
+    plt.savefig(prefix + suffix)
 
 data = np.loadtxt(open(prefix + "scores_test.csv","rb"),delimiter=",",skiprows=1)
 with open("data/truths.txt") as f:

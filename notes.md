@@ -38,3 +38,8 @@ Meeting Notes
 - Increase threshold to 5000 data points
 - Start using TIC
 - Set var parameter for kern as var of y data, stop running on normalized(?)
+
+### 4/21/2015
+- Downsample, get optimized kernel, and use optimized kernel on full dataset (check against original approach)
+- Remove outliers
+- Run optimize on 20 different starting conditions between 10th and 90th percentile indices in distances array
