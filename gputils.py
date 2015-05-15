@@ -1,5 +1,7 @@
 import numpy as np
 import sys
+import gc
+import time
 from sklearn.metrics import mutual_info_score
 
 # Calculate mutual information
@@ -12,6 +14,9 @@ def calc_MI(x, y):
 # Returns tuple (X, Y) of data parsed from cause-effect database.
 def loaddata(filename):
     data = np.loadtxt("data/" + filename)
+    # Automatically downsample data with between 1000 and 5000 pairs
+    if len(data) > 1000 and len(data) <= 5000:
+        data = data[np.random.choice(len(data), size=1000, replace=False),:]
     X = data[:,:1]
     Y = data[:,1:]
     return X, Y
@@ -62,19 +67,22 @@ def execute(prefix, gpfunc):
             continue
         filename = "pair00%02d.txt" % (i,)
         X, Y = loaddata(filename)
-        #if X.size > 1000:
-        #    print "Size of file %d too big (%d)\n" % (i, X.size)
-        #    continue
+        if X.size > 5000:
+            print "Size of file %d too big (%d)\n" % (i, X.size)
+            continue
         if Y.shape[1] > 1:
             print "File %d has multidimensional data\n" % (i,)
             continue
         print "Running GP on %s, %d data points" % (filename, Y.size)
         X_norm, Y_norm = normalize_data(X), normalize_data(Y)
         print np.var(X), np.var(Y)
+        a = time.time()
         scores_xy = gpfunc(X, Y, prefix + "%02dxy" % (i,))
         scores_yx = gpfunc(Y, X, prefix + "%02dyx" % (i,))
         scores_norm_xy = gpfunc(X_norm, Y_norm, prefix + "%02dnormxy" % (i,))
         scores_norm_yx = gpfunc(Y_norm, X_norm, prefix + "%02dnormyx" % (i,))
+        print '==========================='
+        print time.time() - a
         output = [i] + [val for pair in zip(scores_xy, scores_yx) for val in pair] +\
         [val for pair in zip(scores_norm_xy, scores_norm_yx) for val in pair]
         with open(prefix + "scores_test.csv", "a") as f:

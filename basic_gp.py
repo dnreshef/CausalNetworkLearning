@@ -4,7 +4,6 @@ import pylab
 import time
 import subprocess
 import os
-import gc
 from gputils import *
 
 # Constants
@@ -13,7 +12,7 @@ timing = False
 
 # Returns tuple (a, b) of scores, indicating the strength of x --> y causality
 # and y --> x causality, respectively.
-def gp(X, Y, filename=None, bandwidth=50, bfgs_iters=200):
+def gp(X, Y, filename=None, bandwidth=50, bfgs_iters=100):
     a = time.time()
 
     #X, Y = filter_outliers(X, Y)
@@ -24,21 +23,14 @@ def gp(X, Y, filename=None, bandwidth=50, bfgs_iters=200):
     x_lim = (np.amin(x), np.amax(x))
     lengthscale = edistance_at_percentile(x, bandwidth)
     xkern = GPy.kern.RBF(1, variance=1., lengthscale=lengthscale)
-    if (X.size > 1000):
-        print "Downsampling..."
-        points = np.random.randint(X.size, size=1000)
-        Xcap = X[points]
-        Ycap = Y[points]
-    else:
-        Xcap = X
-        Ycap = Y
 
-    x_optimize = GPy.models.GPRegression(Xcap, Ycap, kernel=xkern)
+    x_optimize = GPy.models.GPRegression(X, Y, kernel=xkern)
 
     b = time.time()
 
-    x_optimize.optimize(max_iters=bfgs_iters)#optimize_restarts
-    x_model = GPy.models.GPRegression(X, Y, kernel=x_optimize.kern)
+    # No optimize restart
+    x_optimize.optimize(max_iters=bfgs_iters)
+    x_model = x_optimize
 
     c = time.time()
 
