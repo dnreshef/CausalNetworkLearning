@@ -5,7 +5,7 @@ prefix = "/Users/georgedu/Dropbox/Dave and George Shared/results/"
 gpss_prefix = "/Users/georgedu/Dropbox/Dave and George Shared/gpss_results/"
 metrics = ["var", "MI", "nll", "MIC", "varnorm", "MInorm", "nllnorm", "MICnorm"]
 with open("data/truths.txt") as f:
-    truths = [line.rstrip() for line in f]
+    truths = np.array([line.rstrip() for line in f])
 
 def plot_confidence(datafile):
     data = np.loadtxt(open(datafile,"rb"),delimiter=",",skiprows=1)
@@ -34,17 +34,24 @@ def plot_confidence(datafile):
         plt.clf()
 
 def compare(datafile1, datafile2):
+    print "First dataset is %s, second dataset is %s" % (datafile1, datafile2)
     data1 = np.loadtxt(open(datafile1,"rb"),delimiter=",",skiprows=1)
     data2 = np.loadtxt(open(datafile2,"rb"),delimiter=",",skiprows=1)
     sorted1 = data1[data1[:,0].argsort()]
     sorted2 = data2[data2[:,0].argsort()]
     for i in xrange(8):
+        print "For metric %s" % (metrics[i],)
         X1 = sorted1[:,[2*i+1]].ravel()
         Y1 = sorted1[:,[2*i+2]].ravel()
         X2 = sorted2[:,[2*i+1]].ravel()
         Y2 = sorted2[:,[2*i+2]].ravel()
+        truth = truths[sorted1[:,0].astype(np.int) - np.ones(Y1.size, dtype=np.int)]
+        first_correct = np.logical_xor((Y1 / X1) > 1, truth == "y")
+        second_correct = np.logical_xor((Y2 / X2) > 1, truth == "y")
+        print "First dataset predicted right %d / %d of the time" % (first_correct.sum(), first_correct.size)
+        print "Second dataset predicted right %d / %d of the time" % (second_correct.sum(), second_correct.size)
         same_results = (((Y1 / X1) - np.ones(Y1.size)) * ((Y2 / X2) - np.ones(Y1.size))) > 0
-        print "For metric %s, data matched %d / %d of the time" % (metrics[i], same_results.sum(), same_results.size)
+        print "Data matched %d / %d of the time" % (same_results.sum(), same_results.size)
 
-plot_confidence(prefix + "scores_test_new.csv")
-#compare(prefix + "scores_test.csv", gpss_prefix + "scores_test.csv")
+#plot_confidence(prefix + "scores_test.csv")
+compare(prefix + "scores_test.csv", gpss_prefix + "scores_test.csv")
