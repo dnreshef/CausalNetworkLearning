@@ -1,7 +1,7 @@
 library('pcalg')
 data(gmG)
-#mydata = gmG8$x
-mydata = read.csv('pair0053.csv')
+mydata = gmG8$x
+#mydata = read.csv('pair0053.csv')
 n <- nrow (mydata)
 V <- colnames(mydata) # labels aka node names
 ## estimate CPDAG
@@ -12,5 +12,5 @@ if (require(Rgraphviz)) {
     ## show estimated CPDAG
     par(mfrow=c(1,2))
     plot(pc.fit, main = "Estimated CPDAG")
-    plot(mydata, main = "True DAG")
+    #plot(mydata, main = "True DAG")
 }
