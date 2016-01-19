@@ -61,9 +61,6 @@ def edistance_at_percentile(X, q):
             return distances[i]
 
 def sort_for_plotting(x, top, bottom):
-    print x.shape
-    print top.shape
-    print bottom.shape
     t = np.column_stack((x, top, bottom))
     return t[t[:,0].argsort()]
 
@@ -86,11 +83,13 @@ def run(sample_size, D, plot=False):
     print("Optimized paramaters: {}".format(cov_params))
 
     def objective(x_star):
-        ymu, ys2 = predict(cov_params, x, y, x_star.reshape((1, len(x_star))))
-        ret = ymu - 1.645 * np.sqrt(ys2)
-        return ret[0][0]
+        ymu, y_cov = predict(cov_params, x, y, x_star.reshape((1, x_star.size)))
+        ret = ymu - 1.645 * np.sqrt(np.diag(y_cov))
+        return ret[0]
 
-    x_opt = fmin_bfgs(lambda x: objective(x) * -1, np.arange(0, 0.2, 0.1))
+    init_guess = np.arange(0, D * 0.1 - 0.01, 0.1)
+    print init_guess
+    x_opt = fmin_bfgs(lambda x: objective(x) * -1, init_guess) # Maximize 5th percentile
     print "Optimized value of x:", x_opt
 
     if not plot:
@@ -112,8 +111,8 @@ def run(sample_size, D, plot=False):
     plt.fill_between(t2[:,0], t2[:,1], t2[:,2], facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
     plt.show()
 
-x = np.arange(50, 500, 25)
-x_opts = [run(sample_size, 2) for sample_size in x]
+x = np.arange(50, 1000, 25)
+x_opts = [run(sample_size, 5) for sample_size in x] # 5-dimensional
 y = [np.absolute(x_opt[-1]) for x_opt in x_opts]
 plt.figure()
 plt.plot(x, y, ls='-', marker='+')
