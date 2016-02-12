@@ -1,105 +1,160 @@
+from __future__ import print_function
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import fmin_bfgs
 from scipy.optimize import minimize
 from gp_lib import make_gp_funs, rbf_covariance
-from simulation_data import parabola
+from simulation_data import parabola, corrugated_curve
+from operator import add
 
-def edistance_at_percentile(X, q):
-    distances = []
-    for i in xrange(10000):
-        a = X[np.random.choice(len(X))]
-        b = X[np.random.choice(len(X))]
-        distances.append(np.linalg.norm(a - b))
-    distances.sort()
-    for i in xrange(q*100, 10000):
-        if distances[i] > 0:
-            return distances[i]
-
-def sort_for_plotting(x, top, bottom):
-    t = np.column_stack((x, top, bottom))
-    return t[t[:,0].argsort()]
-
-def find_sparse_intervention(objective, init_guess, dim=1):
+def find_sparse_intervention(objective, test_point, dim=1):
+    def restricted_objective(dims):
+        def fun(x):
+            guess = np.copy(test_point)
+            guess[dims] = x
+            return -objective(guess)
+        return fun
     def regularized_objective(l):
-        return lambda x: -objective(x) + l * np.linalg.norm(l - init_guess, ord=1)
+        return lambda x: -objective(x) + l * np.linalg.norm(l - test_point, ord=1)
+
+    # Identify dimensions to be optimized
     reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
     log_search = True
-    last_intervention = None
+    last_dim_diff = None
     x_opt = None
     while len(reg_constants) > 0:
         l = reg_constants.pop()
-        print("Trying lambda={l}:".format(l=l))
-        x_opt = fmin_bfgs(regularized_objective(l), init_guess)
-        print x_opt
-        if np.count_nonzero(x_opt != init_guess) > dim:
-            assert last_intervention is not None
+        print("Trying lambda=:", l)
+        x_opt = fmin_bfgs(regularized_objective(l), test_point, disp=False)
+        print(x_opt)
+        if np.count_nonzero(x_opt != test_point) > dim:
+            assert last_dim_diff is not None
             if log_search:
                 reg_constants = (np.arange(2, 10) * l).tolist()
                 log_search = False
-            else:
-                return last_intervention
+            else: 
+                break
         else:
-            last_intervention = x_opt
-    return x_opt
+            last_dim_diff = x_opt != test_point
 
-def run(sample_size, D, plot=False):
-    print("Running with sample size {ss} in a {d}-D space".format(ss=sample_size, d=D))
+    # If dimensions found, now optimize
+    if np.count_nonzero(last_dim_diff) == 0:
+        print("I couldn't optimize the test point at all.")
+        return test_point
+    else: 
+        print("Now optimizing these dimensions:",last_dim_diff)
+        restricted_opt = fmin_bfgs(restricted_objective(last_dim_diff), test_point[last_dim_diff])
+        ret = np.copy(test_point)
+        ret[last_dim_diff] = restricted_opt
+        return ret
+
+def find_gp_parameters(num_params, nll):
+    init_params = np.zeros(num_params)
+    optimization_bounds = [(None, None)]+[(-15, 5) for i in range(num_params - 1)]
+    return minimize(nll, init_params, method='L-BFGS-B', bounds=optimization_bounds)['x']
+
+def validate_gp():
+    D = 5
+    fixed_x, fixed_y, z = parabola(1000, D)
+    nlls = []
+    for i in xrange(100, 501, 100):
+        training_x, training_y, z = parabola(i, D)
+        y = training_y.flatten()
+        num_params, predict, log_marginal_likelihood = make_gp_funs(rbf_covariance, num_cov_params=D + 1)
+        opt_params = find_gp_parameters(num_params, lambda params: -log_marginal_likelihood(params, training_x, y))
+        nlls.append(log_marginal_likelihood(opt_params, fixed_x, fixed_y.flatten()))
+    print("Negative log likelihoods:", nlls)
+
+def run(training_x, training_y, test_point, plot_points=None):
+    D = training_x.shape[1]
+    print("Running with sample size {ss} in a {d}-D space".format(ss=training_x.shape[0], d=D))
+    print("Optimizing gp parameters.")
     # Build model and objective function.
     num_params, predict, log_marginal_likelihood = make_gp_funs(rbf_covariance, num_cov_params=D + 1)
 
-    x, y, z = parabola(sample_size=sample_size, D=D)
+    x, y = training_x, training_y
     y = y.flatten()
-    nll = lambda params: -log_marginal_likelihood(params, x, y)
 
-    #lel = np.apply_along_axis(np.std, 0, x)
-    #lengthscale = edistance_at_percentile(x, 50) # output scale
+    opt_params = find_gp_parameters(num_params, lambda params: -log_marginal_likelihood(params, x, y))
+    print("Optimized paramaters:",opt_params)
 
-    init_params = np.zeros(num_params)
-    #print("Initial paramaters: {}".format(init_params))
-    optimization_bounds = [(None, None)]+[(-15, 5) for i in range(num_params - 1)]
-    cov_params = minimize(nll, init_params, method='L-BFGS-B', bounds=optimization_bounds)['x']
-    print("Optimized paramaters: {}".format(cov_params))
-
-    print("Now finding optimal intervention:")
+    print("Finding optimal intervention.")
     # 5th percentile of gp
     def objective(x_star):
-        ymu, y_cov = predict(cov_params, x, y, x_star.reshape((1, x_star.size)))
+        ymu, y_cov = predict(opt_params, x, y, x_star.reshape((1, x_star.size)))
         ret = ymu - 1.645 * np.sqrt(np.diag(y_cov))
         return ret[0]
 
-    init_guess = np.arange(0, D * 0.1 - 0.01, 0.1)
-    x_opt = find_sparse_intervention(objective, init_guess)
-    print "Optimized value of x:", x_opt
+    x_opt = find_sparse_intervention(objective, test_point)
+    print("Optimized value of x:", x_opt)
 
-    if not plot:
-        print
+    if plot_points is None:
+        print("\n")
         return x_opt
 
-    ymu, y_cov = predict(cov_params, x, y, z)
+    ymu, y_cov = predict(opt_params, x, y, plot_points)
     ys2 = np.diag(y_cov)
     q_95 = ymu + 1.645 * np.sqrt(ys2)
     q_5 = ymu - 1.645 * np.sqrt(ys2)
-    t1 = sort_for_plotting(z[:,-1], q_95, q_5)
-    t2 = sort_for_plotting(z[:,0], q_95, q_5)
 
     plt.figure()
     ymu = np.reshape(ymu, (ymu.shape[0],))
-    plt.plot(z[:,-1], ymu, ls='None', marker='+')
-    plt.fill_between(t1[:,0], t1[:,1], t1[:,2], facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
-    plt.show()
-    plt.figure()
-    plt.plot(z[:,0], ymu, ls='None', marker='+')
-    plt.fill_between(t2[:,0], t2[:,1], t2[:,2], facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
+    plt.title('gp regression {d}d'.format(d=D))
+    plt.plot(plot_points[:,-1], ymu, ls='None', marker='+')
+    plt.fill_between(plot_points[:,-1], q_95, q_5, facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
+    opt_mu, opt_cov = predict(opt_params, x, y, x_opt.reshape((x_opt.size, 1)))
+    plt.plot(x_opt[-1], opt_mu[-1] - 1.645 * np.sqrt(np.diag(opt_cov)[-1]), marker='.')
     plt.show()
     return x_opt
 
-#x = 100 * np.ones(1)
-x = np.arange(100, 1001, 25)
-x_opts = [run(sample_size, 9) for sample_size in x]
-y = [x_opt[-1] for x_opt in np.abs(x_opts)]
-plt.figure()
-plt.plot(x, y, ls='-', marker='+')
-#plt.plot(100, np.average(y), color='r', marker='x')
-plt.show()
+def analyze_sample_size(sample_sizes, dim):
+    repeat = 20
+    test_point = np.arange(0, 0.61, 0.6 / (dim-1))
+    x_opts = [0] * len(sample_sizes)
+    correct_dim_found_count = 0
+    for i in xrange(repeat):
+        x_opts_i = []
+        for sample_size in sample_sizes:
+            training_x, training_y, plot_points = parabola(sample_size, dim)
+            x_opt_i = run(training_x, training_y, test_point)
+            if (x_opt_i != test_point)[-1]:
+                correct_dim_found_count += 1
+            x_opts_i.append(x_opt_i)
+        x_opts = map(add, x_opts, x_opts_i)
+    print("Correct dimension to intervene on was identified in {} out of {} runs.".format(correct_dim_found_count, len(sample_sizes) * repeat))
+    x_opts = [r / repeat for r in x_opts]
+    y = [x_opt[-1] for x_opt in np.abs(x_opts)]
+    plt.figure()
+    plt.title('intervention distance vs sample size')
+    plt.xlabel('sample size')
+    plt.ylabel('intervention distance')
+    plt.plot(sample_sizes, y, ls='-', marker='+')
+    plt.show()
 
+def analyze_dimensions(sample_size, dims):
+    repeat = 15
+    x_opts = [0] * len(dims)
+    correct_dim_found_count = 0
+    for i in xrange(repeat):
+        x_opts_i = []
+        for dim in dims:
+            test_point = np.arange(0, 0.61, 0.6 / (dim-1))
+            training_x, training_y, plot_points = parabola(sample_size, dim)
+            x_opt_i = run(training_x, training_y, test_point)
+            if (x_opt_i != test_point)[-1]:
+                correct_dim_found_count += 1
+            x_opts_i.append(x_opt_i)
+        x_opts = map(add, x_opts, x_opts_i)
+    print("Correct dimension to intervene on was identified in {} out of {} runs.".format(correct_dim_found_count, len(dims) * repeat))
+    x_opts = [r / repeat for r in x_opts]
+    y = [x_opt[-1] for x_opt in np.abs(x_opts)]
+    plt.figure()
+    plt.title('intervention distance vs dimensions')
+    plt.xlabel('dimensions')
+    plt.ylabel('intervention distance')
+    plt.plot(dims, y, ls='-', marker='+')
+    plt.show()
+
+#analyze_sample_size(np.arange(100, 601, 100), 10)
+analyze_dimensions(500, np.arange(2, 16, 1))
+#validate_gp()

@@ -56,5 +56,5 @@ def rbf_covariance(kernel_params, x, xp):
 def mvn_logpdf(x, mean, cov):
     log_det_cov = np.linalg.slogdet(cov)[1]
     a = -0.5 * (np.log(2 * np.pi) * len(x) + log_det_cov)
-    b = -0.5 * np.dot(np.dot(np.transpose(x - mean), np.linalg.pinv(cov)), x - mean)
+    b = -0.5 * np.dot(np.dot(np.transpose(x - mean), np.linalg.inv(cov)), x - mean)
     return a + b
