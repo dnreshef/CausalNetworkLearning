@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import fmin_bfgs
 from scipy.optimize import minimize
-from gp_lib import make_gp_funs, rbf_covariance
-from simulation_data import parabola, corrugated_curve
+from gp_lib import make_gp_funs, rbf_covariance, mvn_logpdf
+from simulation_data import parabola, sine
 from operator import add
 
 def find_sparse_intervention(objective, test_point, dim=1):
@@ -57,13 +57,14 @@ def validate_gp():
     D = 5
     fixed_x, fixed_y, z = parabola(1000, D)
     nlls = []
-    for i in xrange(100, 501, 100):
+    for i in xrange(50, 301, 50):
         training_x, training_y, z = parabola(i, D)
         y = training_y.flatten()
         num_params, predict, log_marginal_likelihood = make_gp_funs(rbf_covariance, num_cov_params=D + 1)
         opt_params = find_gp_parameters(num_params, lambda params: -log_marginal_likelihood(params, training_x, y))
-        nlls.append(log_marginal_likelihood(opt_params, fixed_x, fixed_y.flatten()))
-    print("Negative log likelihoods:", nlls)
+        pred_mean, pred_cov = predict(opt_params, training_x, y, fixed_x) 
+        nlls.append(mvn_logpdf(fixed_y.flatten(), pred_mean, np.diag(np.diag(pred_cov))))
+    print("log likelihoods:", nlls)
 
 def run(training_x, training_y, test_point, plot_points=None):
     D = training_x.shape[1]
@@ -109,13 +110,13 @@ def run(training_x, training_y, test_point, plot_points=None):
 
 def analyze_sample_size(sample_sizes, dim):
     repeat = 20
-    test_point = np.arange(0, 0.61, 0.6 / (dim-1))
+    test_point = np.arange(0, 1.61, 1.6 / (dim-1))
     x_opts = [0] * len(sample_sizes)
     correct_dim_found_count = 0
     for i in xrange(repeat):
         x_opts_i = []
         for sample_size in sample_sizes:
-            training_x, training_y, plot_points = parabola(sample_size, dim)
+            training_x, training_y, plot_points = sine(sample_size, dim)
             x_opt_i = run(training_x, training_y, test_point)
             if (x_opt_i != test_point)[-1]:
                 correct_dim_found_count += 1
@@ -123,7 +124,8 @@ def analyze_sample_size(sample_sizes, dim):
         x_opts = map(add, x_opts, x_opts_i)
     print("Correct dimension to intervene on was identified in {} out of {} runs.".format(correct_dim_found_count, len(sample_sizes) * repeat))
     x_opts = [r / repeat for r in x_opts]
-    y = [x_opt[-1] for x_opt in np.abs(x_opts)]
+    #y = [x_opt[-1] for x_opt in np.abs(x_opts)]
+    y = [min(abs(x_opt[-1] - 2.5), abs(x_opt[-1] - 0.5)) for x_opt in x_opts]
     plt.figure()
     plt.title('intervention distance vs sample size')
     plt.xlabel('sample size')
@@ -138,8 +140,8 @@ def analyze_dimensions(sample_size, dims):
     for i in xrange(repeat):
         x_opts_i = []
         for dim in dims:
-            test_point = np.arange(0, 0.61, 0.6 / (dim-1))
-            training_x, training_y, plot_points = parabola(sample_size, dim)
+            test_point = np.arange(0, 1.61, 1.6 / (dim-1))
+            training_x, training_y, plot_points = sine(sample_size, dim)
             x_opt_i = run(training_x, training_y, test_point)
             if (x_opt_i != test_point)[-1]:
                 correct_dim_found_count += 1
@@ -147,7 +149,8 @@ def analyze_dimensions(sample_size, dims):
         x_opts = map(add, x_opts, x_opts_i)
     print("Correct dimension to intervene on was identified in {} out of {} runs.".format(correct_dim_found_count, len(dims) * repeat))
     x_opts = [r / repeat for r in x_opts]
-    y = [x_opt[-1] for x_opt in np.abs(x_opts)]
+    #y = [x_opt[-1] for x_opt in np.abs(x_opts)]
+    y = [min(abs(x_opt[-1] - 2.5), abs(x_opt[-1] - 0.5)) for x_opt in x_opts]
     plt.figure()
     plt.title('intervention distance vs dimensions')
     plt.xlabel('dimensions')
@@ -156,5 +159,5 @@ def analyze_dimensions(sample_size, dims):
     plt.show()
 
 #analyze_sample_size(np.arange(100, 601, 100), 10)
-analyze_dimensions(500, np.arange(2, 16, 1))
-#validate_gp()
+#analyze_dimensions(500, np.arange(2, 16, 1))
+validate_gp()
