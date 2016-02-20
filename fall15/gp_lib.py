@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.linalg import solve
+from scipy.stats import norm
 
 def make_gp_funs(cov_func, num_cov_params):
     """Functions that perform Gaussian process regression.
@@ -7,11 +8,12 @@ def make_gp_funs(cov_func, num_cov_params):
 
     def unpack_params(params):
         mean        = params[0]
+        noise_scale = np.exp(params[1])
         cov_params  = params[2:]
-        if params[1] <= 100:
-            noise_scale = np.exp(params[1]) + 0.001
-        else:
-            noise_scale = np.exp(100) # hack for optimizer to prevent overflow
+        #if params[1] <= 100:
+        #    noise_scale = np.exp(params[1]) + 0.001
+        #else:
+        #    noise_scale = np.exp(100) # hack for optimizer to prevent overflow
         return mean, cov_params, noise_scale
 
     def predict(params, x, y, xstar):
@@ -43,7 +45,16 @@ def make_gp_funs(cov_func, num_cov_params):
             print ("Params:",params)
             raise
 
-    return num_cov_params + 2, predict, log_marginal_likelihood
+    def avg_heldout_loglik(params, x, y, heldout_x, heldout_y):
+        hlk = 0
+        for i in xrange(heldout_x.shape[0]):
+            pred_mean, pred_cov = predict(params, x,y, np.matrix(heldout_x[i,:]))
+            hlk += mvn_logpdf(np.array([heldout_y[i]]),pred_mean, pred_cov)
+            #hlk += norm.logpdf(heldout_y[i], pred_mean[0], pred_cov[0,0]**0.5)
+        hlk /= heldout_x.shape[0]
+        return hlk
+
+    return num_cov_params + 2, predict, log_marginal_likelihood, avg_heldout_loglik
 
 # Define an example covariance function.
 def rbf_covariance(kernel_params, x, xp):
