@@ -6,6 +6,7 @@ from scipy.optimize import minimize
 from gp_lib import make_gp_funs, rbf_covariance, mvn_logpdf
 from simulation_data import parabola, sine
 from operator import add
+from sklearn import gaussian_process
 
 def find_sparse_intervention(objective, test_point, intervention_dim=1):
     def restricted_objective(dims):
@@ -50,21 +51,22 @@ def find_sparse_intervention(objective, test_point, intervention_dim=1):
 
 def find_gp_parameters(num_params, nll):
     init_params = np.zeros(num_params)
-    #print("Init parameters: ", init_params)
+    init_params[1] = 0
+    print("Init parameters: ", init_params)
 
     # When parameters are optimized, the MSE decreases for increasing sample size, but for some reason the log likelihood decreases (perhaps due to overfitting because the predicted variance is getting way too small).
     optimization_bounds = [(None, None)]+[(-15, 15) for i in range(num_params - 1)]
     #optimized_params = minimize(nll, init_params, method='L-BFGS-B', bounds=optimization_bounds)['x']
-    optimized_restricted_params = minimize(lambda params: nll(np.concatenate((params,init_params[3:]))), init_params[:3], method='L-BFGS-B', bounds=optimization_bounds[:3])['x']
-    optimized_params = np.concatenate((optimized_restricted_params, init_params[3:]))
-    print("Optimized parameters: ", optimized_params)
-    return optimized_params
-    #return init_params
+    #optimized_restricted_params = minimize(lambda params: nll(np.concatenate((params,init_params[3:]))), init_params[:3], method='L-BFGS-B', bounds=optimization_bounds[:3])['x']
+    #optimized_params = np.concatenate((optimized_restricted_params, init_params[3:]))
+    #print("Optimized parameters: ", optimized_params)
+    #return optimized_params
+    return init_params
 
 def validate_gp():
     nrep = 1
-    D = 5
-    n_range = range(210, 100, -100)
+    D = 1
+    n_range = range(510, 9, -500)
     n_heldout = 1000
     avg_nlls = [0]*len(n_range)
     avg_mses = [0]*len(n_range)
@@ -81,8 +83,8 @@ def validate_gp():
                 opt_params = find_gp_parameters(num_params, lambda params: -log_marginal_likelihood(params, training_x, y))
             pred_mean, pred_cov = predict(opt_params, training_x, y, fixed_x)
             nlls[i] = (mvn_logpdf(fixed_y.flatten(), pred_mean, np.diag(np.diag(pred_cov)))/n_heldout)
-            print(np.mean((np.diag(pred_cov))))
             #nlls[i] = avg_heldout_loglik(opt_params, training_x,y,fixed_x,fixed_y.flatten())
+            print("Predictive Cov: ", np.mean((np.diag(pred_cov))))
             mses[i] = (np.mean( (fixed_y.flatten()-pred_mean) ** 2))
 
             avg_mses[i] = avg_mses[i] + mses[i]
@@ -102,6 +104,39 @@ def validate_gp():
     avg_nlls = [x / nrep for x in avg_nlls]
     print("avg log likelihoods:", avg_nlls)
     print("avg Mean Squared Errors:", avg_mses)
+
+
+def f(x):
+    return np.power(x,2)
+
+def validate_gp_scikitlearn():
+    X = np.atleast_2d(np.linspace(-1, 1, 50)).T
+    y = f(X).ravel() + 0.2 * np.random.standard_normal()
+    x = np.atleast_2d(np.linspace(-1, 1, 1000)).T
+    gp = gaussian_process.GaussianProcess(theta0=1e-2, thetaL=1e-4, thetaU=1e-1)
+    gp.fit(X, y)
+    y_pred, sigma2_pred = gp.predict(x, eval_MSE=True)
+    print("MSE: ", np.mean( (f(x).ravel()-y_pred) ** 2))
+    print("Sigma: ", np.mean(sigma2_pred))
+
+def validate_gp_scikitlearn2():
+    D = 1
+    n_range = range(510, 9, -500)
+    n_heldout = 1000
+    fixed_x, fixed_y, z = parabola(n_heldout, D)
+
+    for i in xrange(len(n_range)):
+        n = n_range[i]
+        training_x, training_y, z = parabola(n, D)
+        y = training_y.flatten()
+        gp = gaussian_process.GaussianProcess(theta0=1e-2, thetaL=1e-4, thetaU=1e-1)
+        gp.fit(training_x, training_y)
+        y_pred, sigma2_pred = gp.predict(fixed_x, eval_MSE=True)
+
+        print("MSE: ", np.mean( (fixed_y.flatten()-y_pred) ** 2))
+        print("Sigma: ", sigma2_pred)
+
+
 
 
 def run(training_x, training_y, test_point, plot_points=None, intervention_dim=1):
@@ -199,4 +234,5 @@ def analyze_dimensions(sample_size, dims):
 
 #analyze_sample_size(np.arange(100, 501, 100), 20)
 #analyze_dimensions(500, np.arange(2, 16, 1))
-validate_gp()
+#validate_gp()
+validate_gp_scikitlearn()

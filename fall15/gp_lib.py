@@ -24,6 +24,10 @@ def make_gp_funs(cov_func, num_cov_params):
         cov_y_f = cov_func(cov_params, x, xstar)
         cov_y_y = cov_func(cov_params, x, x) + noise_scale * np.eye(len(y))
         pred_mean = mean +   np.dot(solve(cov_y_y, cov_y_f).T, y - mean)
+        print("Pred mean: ", np.mean(pred_mean))
+        print("cov_f_f: ", np.mean(np.diag(cov_f_f)))
+        print("cov_y_f: ", np.mean(np.diag(cov_y_f)))
+        print("cov_y_y: ", np.mean(np.diag(cov_y_y)))
         pred_cov = cov_f_f - np.dot(solve(cov_y_y, cov_y_f).T, cov_y_f)
         return pred_mean, pred_cov
 
@@ -57,14 +61,14 @@ def make_gp_funs(cov_func, num_cov_params):
     return num_cov_params + 2, predict, log_marginal_likelihood, avg_heldout_loglik
 
 # Define an example covariance function.
-def rbf_covariance2(kernel_params, x, xp):
+def rbf_covariance(kernel_params, x, xp):
     output_scale = np.exp(kernel_params[0])
     lengthscales = np.exp(kernel_params[1:])
     diffs = np.expand_dims(x /lengthscales, 1)\
           - np.expand_dims(xp/lengthscales, 0)
     return output_scale * np.exp(-0.5 * np.sum(diffs**2, axis=2))
 
-def rbf_covariance(kernel_params, x, xp):
+def rbf_covariance2(kernel_params, x, xp):
     output_scale = np.exp(kernel_params[0])
     lengthscales = np.exp(kernel_params[1:])
     K = np.zeros([x.shape[0], xp.shape[0]])
