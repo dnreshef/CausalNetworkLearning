@@ -7,7 +7,7 @@ from gp_lib import make_gp_funs, rbf_covariance, mvn_logpdf
 from simulation_data import parabola, sine
 from operator import add
 
-def find_sparse_intervention(objective, test_point, interventionDim=1):
+def find_sparse_intervention(objective, test_point, intervention_dim=1):
     def restricted_objective(dims):
         def fun(x):
             guess = np.copy(test_point)
@@ -18,7 +18,7 @@ def find_sparse_intervention(objective, test_point, interventionDim=1):
         return lambda x: -objective(x) + l * np.linalg.norm(x - test_point, ord=1)
 
     # Identify dimensions to be optimized
-    reg_constants = [0] #np.power(10.0, np.arange(-7, 7)).tolist()
+    reg_constants = [0]#np.power(10.0, np.arange(-7, 7)).tolist()
     log_search = True
     last_dim_diff = None
     x_opt = None
@@ -27,7 +27,7 @@ def find_sparse_intervention(objective, test_point, interventionDim=1):
         print("Trying lambda=:", l)
         x_opt = fmin_bfgs(regularized_objective(l), test_point, disp=False)
         print(x_opt)
-        if np.count_nonzero(x_opt != test_point) > interventionDim:
+        if np.count_nonzero(x_opt != test_point) > intervention_dim:
             assert last_dim_diff is not None
             if log_search:
                 reg_constants = (np.arange(2, 10) * l).tolist()
@@ -53,15 +53,16 @@ def find_gp_parameters(num_params, nll):
     return init_params
 
     # When parameters are optimized, the MSE decreases for increasing sample size, but for some reason the log likelihood decreases (perhaps due to overfitting because the predicted variance is getting way too small).
-    #optimization_bounds = [(None, None)]+[(-15, 15) for i in range(num_params - 1)]
+    optimization_bounds = [(None, None)]+[(-15, 15) for i in range(num_params - 1)]
     #optimized_params = minimize(nll, init_params, method='L-BFGS-B', bounds=optimization_bounds)['x']
-    #print("Optimized parameters: ", np.exp(optimized_params))
+    #optimized_restricted_params = minimize(lambda params: nll(np.concatenate((params,init_params[3:]))), init_params[:3], method='L-BFGS-B', bounds=optimization_bounds[:3])['x']
+    #optimized_params = np.concatenate((optimized_restricted_params, init_params[3:]))
+    #print("Optimized parameters: ", optimized_params)
     #return optimized_params
-
 
 def validate_gp():
     nrep = 1
-    D = 20
+    D = 10
     n_range = range(1010, 9, -100)
     n_heldout = 1000
     avg_nlls = [0]*len(n_range)
@@ -102,7 +103,7 @@ def validate_gp():
     print("avg Mean Squared Errors:", avg_mses)
 
 
-def run(training_x, training_y, test_point, plot_points=None, interventionDim=1):
+def run(training_x, training_y, test_point, plot_points=None, intervention_dim=1):
     D = training_x.shape[1]
     print("Running with sample size {ss} in a {d}-D space".format(ss=training_x.shape[0], d=D))
     print("Optimizing gp parameters.")
@@ -122,7 +123,7 @@ def run(training_x, training_y, test_point, plot_points=None, interventionDim=1)
         ret = ymu - 1.645 * np.sqrt(np.diag(y_cov))
         return ret[0]
 
-    x_opt = find_sparse_intervention(objective, test_point, interventionDim)
+    x_opt = find_sparse_intervention(objective, test_point, intervention_dim)
     print("Optimized value of x:", x_opt)
 
     if plot_points is None:
@@ -145,15 +146,15 @@ def run(training_x, training_y, test_point, plot_points=None, interventionDim=1)
     return x_opt
 
 def analyze_sample_size(sample_sizes, dim):
-    repeat = 1
+    repeat = 20
     test_point = np.arange(0, 1.61, 1.6 / (dim-1))
     x_opts = [0] * len(sample_sizes)
     correct_dim_found_count = 0
     for i in xrange(repeat):
         x_opts_i = []
         for sample_size in sample_sizes:
-            training_x, training_y, plot_points = parabola(sample_size, dim)
-            x_opt_i = run(training_x, training_y, test_point, interventionDim=dim)
+            training_x, training_y, plot_points = sine(sample_size, dim)
+            x_opt_i = run(training_x, training_y, test_point, intervention_dim=dim)
             if (x_opt_i != test_point)[-1]:
                 correct_dim_found_count += 1
             x_opts_i.append(x_opt_i)
@@ -179,7 +180,7 @@ def analyze_dimensions(sample_size, dims):
         for dim in dims:
             test_point = np.arange(0, 1.61, 1.6 / (dim-1))
             training_x, training_y, plot_points = sine(sample_size, dim)
-            x_opt_i = run(training_x, training_y, test_point)
+            x_opt_i = run(training_x, training_y, test_point, intervention_dim=dim)
             if (x_opt_i != test_point)[-1]:
                 correct_dim_found_count += 1
             x_opts_i.append(x_opt_i)
@@ -195,6 +196,6 @@ def analyze_dimensions(sample_size, dims):
     plt.plot(dims, y, ls='-', marker='+')
     plt.show()
 
-analyze_sample_size(np.arange(100, 501, 100), 20)
-#analyze_dimensions(500, np.arange(2, 16, 1))
+#analyze_sample_size(np.arange(100, 501, 100), 20)
+analyze_dimensions(500, np.arange(2, 16, 1))
 #validate_gp()
