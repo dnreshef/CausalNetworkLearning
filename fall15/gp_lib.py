@@ -57,12 +57,22 @@ def make_gp_funs(cov_func, num_cov_params):
     return num_cov_params + 2, predict, log_marginal_likelihood, avg_heldout_loglik
 
 # Define an example covariance function.
-def rbf_covariance(kernel_params, x, xp):
+def rbf_covariance2(kernel_params, x, xp):
     output_scale = np.exp(kernel_params[0])
     lengthscales = np.exp(kernel_params[1:])
     diffs = np.expand_dims(x /lengthscales, 1)\
           - np.expand_dims(xp/lengthscales, 0)
     return output_scale * np.exp(-0.5 * np.sum(diffs**2, axis=2))
+
+def rbf_covariance(kernel_params, x, xp):
+    output_scale = np.exp(kernel_params[0])
+    lengthscales = np.exp(kernel_params[1:])
+    K = np.zeros([x.shape[0], xp.shape[0]])
+    for i in range(x.shape[0]):
+        for j in range(xp.shape[0]):
+            K[i][j] = np.exp(-0.5 * np.sum(((x[i,:] - xp[j,:])/lengthscales)**2))
+    return output_scale * K
+
 
 def mvn_logpdf(x, mean, cov):
     log_det_cov = np.linalg.slogdet(cov)[1]

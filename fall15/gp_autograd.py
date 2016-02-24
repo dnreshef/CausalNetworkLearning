@@ -50,20 +50,21 @@ def find_sparse_intervention(objective, test_point, intervention_dim=1):
 
 def find_gp_parameters(num_params, nll):
     init_params = np.zeros(num_params)
-    return init_params
+    #print("Init parameters: ", init_params)
 
     # When parameters are optimized, the MSE decreases for increasing sample size, but for some reason the log likelihood decreases (perhaps due to overfitting because the predicted variance is getting way too small).
     optimization_bounds = [(None, None)]+[(-15, 15) for i in range(num_params - 1)]
     #optimized_params = minimize(nll, init_params, method='L-BFGS-B', bounds=optimization_bounds)['x']
-    #optimized_restricted_params = minimize(lambda params: nll(np.concatenate((params,init_params[3:]))), init_params[:3], method='L-BFGS-B', bounds=optimization_bounds[:3])['x']
-    #optimized_params = np.concatenate((optimized_restricted_params, init_params[3:]))
-    #print("Optimized parameters: ", optimized_params)
-    #return optimized_params
+    optimized_restricted_params = minimize(lambda params: nll(np.concatenate((params,init_params[3:]))), init_params[:3], method='L-BFGS-B', bounds=optimization_bounds[:3])['x']
+    optimized_params = np.concatenate((optimized_restricted_params, init_params[3:]))
+    print("Optimized parameters: ", optimized_params)
+    return optimized_params
+    #return init_params
 
 def validate_gp():
     nrep = 1
-    D = 10
-    n_range = range(1010, 9, -100)
+    D = 5
+    n_range = range(210, 100, -100)
     n_heldout = 1000
     avg_nlls = [0]*len(n_range)
     avg_mses = [0]*len(n_range)
@@ -80,7 +81,7 @@ def validate_gp():
                 opt_params = find_gp_parameters(num_params, lambda params: -log_marginal_likelihood(params, training_x, y))
             pred_mean, pred_cov = predict(opt_params, training_x, y, fixed_x)
             nlls[i] = (mvn_logpdf(fixed_y.flatten(), pred_mean, np.diag(np.diag(pred_cov)))/n_heldout)
-            #print(np.mean((np.diag(pred_cov))))
+            print(np.mean((np.diag(pred_cov))))
             #nlls[i] = avg_heldout_loglik(opt_params, training_x,y,fixed_x,fixed_y.flatten())
             mses[i] = (np.mean( (fixed_y.flatten()-pred_mean) ** 2))
 
@@ -197,5 +198,5 @@ def analyze_dimensions(sample_size, dims):
     plt.show()
 
 #analyze_sample_size(np.arange(100, 501, 100), 20)
-analyze_dimensions(500, np.arange(2, 16, 1))
-#validate_gp()
+#analyze_dimensions(500, np.arange(2, 16, 1))
+validate_gp()
