@@ -139,7 +139,6 @@ def analyze_sample_size(sample_sizes, dim, simulation, simulation_eval, correct_
     plt.show()
 
 def analyze_dimensions(sample_size, dims, simulation, simulation_eval, correct_dims, repeat):
-    repeat = 15
     average_deviations = []
     std_devs = []
     correct_dim_found_count = 0
@@ -149,7 +148,7 @@ def analyze_dimensions(sample_size, dims, simulation, simulation_eval, correct_d
             test_point = simulation(1, dim)[0][0]
             training_x, training_y, plot_points = simulation(sample_size, dim)
             x_opt = run(training_x, training_y, test_point, intervention_dim=dim)
-            if np.all((x_opt_i != test_point)[correct_dims]):
+            if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             deviations.append(simulation_eval(x_opt))
         average_deviations.append(sum(deviations) / repeat)
@@ -164,5 +163,5 @@ def analyze_dimensions(sample_size, dims, simulation, simulation_eval, correct_d
     plt.errorbar(dims, average_deviations, yerr=np.array(std_devs)*2)
     plt.show()
 
-analyze_sample_size(np.arange(20, 201, 20), 10, parabola, lambda x: np.abs(x[-1]), np.array([-1]), 100)
+analyze_dimensions(80, np.arange(2, 21), parabola, lambda x: np.abs(x[-1]), np.array([-1]), 40)
 #validate_gpy()
