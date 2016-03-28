@@ -137,6 +137,32 @@ def plot_acquisition(acquisition_func, granularity):
     fig.colorbar(surf, shrink=0.5, aspect=5)
     plt.show()
 
+def plot_2D(predict, D, granularity):
+    # Only works with the first two dims being relevant
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    X = np.arange(-100* granularity, 101* granularity, granularity)
+    Y = np.arange(-100* granularity, 101* granularity, granularity)
+    X, Y = np.meshgrid(X, Y)
+    z = np.hstack((X.reshape((X.size, 1)), Y.reshape((Y.size, 1)), np.zeros((X.size, D-2))))
+    zmu, zs2 = predict(z)
+    Z = np.reshape(zmu - 1.645 * np.sqrt(zs2), X.shape)
+    surf = ax.plot_surface(X, Y, Z, rstride=1, cstride=1, cmap=cm.coolwarm,
+                                   linewidth=0, antialiased=False)
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+    plt.show()
+
+def plot_1D(predict, D):
+    # Only works for range [-1, 1] with the last dimension being relevant
+    x = np.arange(-1.0, 1.0, 1e-2)
+    X = np.hstack((np.zeros((200, D-1)), x.reshape((200, 1))))
+    ymu, ys2 = predict(X)
+    ymu = ymu.flatten()
+    ys = np.sqrt(ys2.flatten())
+    plt.plot(x, ymu, ls='None', marker='+')
+    plt.fill_between(x, ymu - 1.645 * ys, ymu + 1.645 * ys, facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
+    plt.show()
+
 def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
     """
     Runs the intervention optimization routine. A model is trained from
@@ -191,24 +217,38 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
         grad = dmu_dX - FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX
         return ret, grad
 
+    def acq(x, y):
+        fmu, fv = model._raw_predict(np.array([[x, y]]))
+        ret, = model.likelihood.predictive_quantiles(fmu, fv, (5,))
+        return ret[0][0]
+
+    #plot_1D(model.predict, D)
+    plot_2D(model.predict, D, 1e-6)
+
     # Smoothing
     orig_lengthscale = kernel.lengthscale.copy()
     orig_variance = kernel.variance.copy()
     current_test_point = test_point
     model.kern.lengthscale.fix()
-    for i in xrange(4, -1, -1):
+    for i in xrange(3, -1, -1):
         print("Lengthscales multiplied by {}".format(np.exp(i)))
         model.kern.lengthscale = np.exp(i) * orig_lengthscale
 
         # Recompute variance and noise scale
         model.optimize()
 
-        if plot_dims is not None:
-            model.plot(fixed_inputs=gpy_plot_fixed_inputs)
-            plt.show()
         current_test_point = find_sparse_intervention(
             objective_and_grad, current_test_point, intervention_dim=D)
         print("Test point reinitialized to", current_test_point)
+        print("Acquisition:", objective_and_grad(current_test_point)[0])
+        mean, var = model.predict(current_test_point.reshape((1, current_test_point.size)))
+        print("Mean:", mean)
+        print("Var:", var)
+
+        if plot_dims is not None:
+            model.plot(fixed_inputs=gpy_plot_fixed_inputs, plot_limits=[-1e-8, 1e-8])
+            plt.show()
+
         print()
         model.kern.variance = orig_variance
 
@@ -225,7 +265,7 @@ def analyze_sample_size(sample_sizes, dim, simulation, simulation_eval,
         for i in xrange(repeat):
             test_point = simulation(1, dim)[0][0]
             training_x, training_y = simulation(sample_size, dim)
-            x_opt = run(training_x, training_y, test_point, intervention_dim=dim, plot_dims=correct_dims)
+            x_opt = run(training_x, training_y, test_point, intervention_dim=dim)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             deviations.append(simulation_eval(x_opt))
@@ -267,7 +307,7 @@ def analyze_dimensions(sample_size, dims, simulation, simulation_eval,
     plt.errorbar(dims, average_deviations, yerr=np.array(std_devs))
     plt.show()
 
-analyze_sample_size(np.array([100]), 10, parabola, lambda x: np.abs(x[-1]), np.array([-1]), 4)
-#analyze_dimensions(100, np.arange(2, 21), sine, lambda x: abs((x[-1] + 0.5) % 2 - 1), np.array([-1]), 100)
-#analyze_sample_size(np.array([100, 200]), 2, line, lambda x: max(2 - x[0], 0) + max(2 - x[1], 0), np.array([0, 1]), 2)
+#analyze_sample_size(np.array([50]), 10, parabola, lambda x: np.abs(x[-1]), np.array([-1]), 100)
+#analyze_sample_size(np.array([50, 75, 100, 150, 200]), 10, sine, lambda x: abs((x[-1] + 0.5) % 2 - 1), np.array([-1]), 100)
+analyze_sample_size(np.array([50, 75, 100, 150, 200]), 2, line, lambda x: max(2 - x[0], 0) + max(2 - x[1], 0), np.array([0, 1]), 100)
 #validate_gpy()
