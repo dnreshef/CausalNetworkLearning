@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from __future__ import print_function
 import numpy as np
 import matplotlib.pyplot as plt
@@ -259,8 +260,7 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation):
         var_array = noise
         var_to_tuple = lambda noise: (sample_size, dimension, noise)
     else:
-        print('Analyze called with incorrect syntax.')
-        sys.exit(2)
+        sys.exit('Analyze called with incorrect syntax.')
 
     for var in var_array:
         devs_x = []
@@ -314,8 +314,10 @@ def main():
     dimension = 10
     sample_size = 100
     noise = 0.2
-    repeat = 150
-    for trial in ['parabola', 'paraboloid', 'sine', 'line', 'plane', 'corrugated_curve']:
+    if len(sys.argv) <= 2:
+        sys.exit('Usage: ./gp_gpy.py runs simulation1 simulation2 ...')
+    repeat = int(sys.argv[1])
+    for trial in sys.argv[2:]:
         exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial})".format(trial=trial)
         exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial})".format(trial=trial)
         exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial})".format(trial=trial)
