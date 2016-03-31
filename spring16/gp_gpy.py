@@ -3,15 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy.optimize import minimize
-from scipy.spatial.distance import pdist
-from scipy.stats import multivariate_normal as mvn
 from simulation import *
+from validation import check_gradient
 import GPy
 import GPyOpt
-import math
 import sys
 
-def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=1):
+def find_sparse_intervention(objective_and_grad, test_point, intervention_dim):
     """
     Finds an intervention constrained to differ from the test point in at most
     intervention_dim dimensions.
@@ -22,7 +20,7 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=1)
             The objective function is maximized.
         test_point (numpy.ndarray): 1D array representing the initial guess
         intervention_dim (int): Max number of dimensions in which intervention
-            can differ from test_point
+            can differ from test_point. If none, optimization is unconstrained.
 
     Returns:
         numpy.ndarray: 1D array of length test_point.size, the optimal intervention
@@ -35,10 +33,17 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=1)
             return negate_tuple(objective_and_grad(guess))
         return fun
 
-    # TODO: Support regularization
     def regularized_objective(l):
-        return lambda x: negate_tuple(objective_and_grad(x))# + l * np.linalg.norm(x - test_point, ord=1)
-    reg_constants = [0]#np.power(10.0, np.arange(-7, 7)).tolist()
+        def fun(x):
+            o, g = objective_and_grad(x)
+            return -o + l * np.linalg.norm(x - test_point, ord=1), -g + l * np.sign(x - test_point)
+        return fun
+
+    reg_constants = [0]
+    if intervention_dim is not None:
+        reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
+    else:
+        intervention_dim = float('inf')
 
     # Identify dimensions to be optimized
     log_search = True
@@ -46,6 +51,7 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=1)
     x_opt = None
     while len(reg_constants) > 0:
         l = reg_constants.pop()
+        print("Trying l=", l)
         x_opt = minimize(regularized_objective(l),
                          test_point,
                          method='BFGS',
@@ -74,47 +80,6 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=1)
         ret = np.copy(test_point)
         ret[last_dim_diff] = restricted_opt
         return ret
-
-def gpyopt_intervention(objective, test_point):
-    """
-    Deprecated. Use find_sparse_intervention instead.
-    """
-    D = len(test_point)
-    def objective_wrapper(x):
-        x = x.reshape((x.size/D, D))
-        n = x.shape[0]
-        return np.apply_along_axis(lambda x: -objective(x), 1, x).reshape(n, 1)
-    opt = GPyOpt.methods.BayesianOptimization(
-        f=objective_wrapper, bounds=[(-2,2) for i in xrange(test_point.size)])
-    opt.run_optimization(20)
-    opt.plot_acquisition()
-    opt.plot_convergence()
-    return opt.x_opt
-
-def validate_gpy():
-    D = 5
-    n_range = range(610, 9, -200)
-    n_heldout = 1000
-    fixed_x, fixed_y, z = line[0](n_heldout, D)
-
-    for i in xrange(len(n_range)):
-        n = n_range[i]
-        print("Sample size", n)
-        training_x, training_y, z = line[0](n, D)
-        y = training_y.flatten()
-        kernel = GPy.kern.RBF(D, ARD=True)
-        model = GPy.models.GPRegression(training_x, training_y, kernel)
-        model.optimize()
-        kernel.lengthscale = 2 * original_lengthscale
-        y_pred, sigma2_pred = model.predict(fixed_x)
-
-        model.plot(fixed_inputs=[(i,0) for i in xrange(2, D)])
-        plt.show()
-        print("MSE: ", np.mean( (fixed_y.flatten()-y_pred.flatten()) ** 2))
-        print("Likelihood function:", mvn.logpdf(
-            fixed_y.flatten(), y_pred.flatten(), np.diag(sigma2_pred.flatten())))
-        print(model)
-        print(kernel.lengthscale)
 
 def plot_acquisition(acquisition_func, granularity):
     """
@@ -167,7 +132,7 @@ def plot_1D(predict, D):
     #plt.fill_between(x, ymu - 1.645 * ys, ymu + 1.645 * ys, facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
     plt.show()
 
-def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
+def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None):
     """
     Runs the intervention optimization routine. A model is trained from
     training_x and training_y, and is used to find a sparse intervention on
@@ -182,7 +147,8 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
         plot_dims (numpy.ndarray): If plot_dims is specified, this must
             be a 1D array with the indices of the dimensions to be plotted.
         intervention_dim (int): Max number of dimensions in which the
-            intervention can differ from test_point
+            intervention can differ from test_point. If None, optimization is
+            unconstrained.
 
     Returns:
         numpy.ndarray: 1D array representing the optimal intervention.
@@ -205,10 +171,6 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
 
     model.optimize()
 
-    print("Optimized gp parameters. Now finding optimal intervention.")
-    print("Test point:", test_point)
-    print()
-
     def objective_and_grad(x_star):
         x = x_star.reshape((1, x_star.size))
         y_mu, y_cov = model.predict(x)
@@ -226,7 +188,13 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
         ret, = model.likelihood.predictive_quantiles(fmu, fv, (5,))
         return ret[0][0]
 
-    #plot_2D(model.predict, D, 1e-8)
+    # Validate plane
+    check_gradient(objective_and_grad, 10, 0)
+    check_gradient(objective_and_grad, 10, 1)
+
+    print("Optimized gp parameters. Now finding optimal intervention.")
+    print("Test point:", test_point)
+    print()
 
     # Smoothing
     orig_lengthscale = kernel.lengthscale.copy()
@@ -240,15 +208,19 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
         # Recompute variance and noise scale
         #model.optimize()
 
-        current_test_point = find_sparse_intervention(
-            objective_and_grad, current_test_point, intervention_dim=D)
-        print("Test point reinitialized to", current_test_point)
+        opt = find_sparse_intervention(
+            objective_and_grad, current_test_point, intervention_dim)
+        print("Test point will be reinitialized to", opt)
+
+        # For plane
+        if not np.all((opt - current_test_point)[:2] >= 0):
+            plot_2D(model.predict, D, 1e-2)
+
+        current_test_point = opt
         #print("Acquisition:", objective_and_grad(current_test_point)[0])
         mean, var = model.predict(current_test_point.reshape((1, current_test_point.size)))
         #print("Mean:", mean)
         #print("Var:", var)
-
-        #plot_1D(model.predict, D)
 
         if plot_dims is not None:
             model.plot(fixed_inputs=gpy_plot_fixed_inputs, plot_limits=[-1e-8, 1e-8])
@@ -260,7 +232,7 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=1):
     print()
     return current_test_point
 
-def analyze(sample_size, dimension, repeat, filename, simulation):
+def analyze(sample_size, dimension, noise, repeat, filename, simulation):
     simulation_func, simulation_eval, correct_dims = simulation
 
     avg_x_diff = []
@@ -273,14 +245,18 @@ def analyze(sample_size, dimension, repeat, filename, simulation):
     var_array = None
     var_to_tuple = None
 
-    if isinstance(sample_size, int):
+    if isinstance(dimension, np.ndarray):
         independent_var = 'dimension'
         var_array = dimension
-        var_to_tuple = lambda dimension: (sample_size, dimension)
-    elif isinstance(dimension, int):
+        var_to_tuple = lambda dimension: (sample_size, dimension, noise)
+    elif isinstance(sample_size, np.ndarray):
         independent_var = 'sample size'
         var_array = sample_size
-        var_to_tuple = lambda sample_size: (sample_size, dimension)
+        var_to_tuple = lambda sample_size: (sample_size, dimension, noise)
+    elif isinstance(noise, np.ndarray):
+        independent_var = 'noise'
+        var_array = noise
+        var_to_tuple = lambda noise: (sample_size, dimension, noise)
     else:
         print('Analyze called with incorrect syntax.')
         sys.exit(2)
@@ -290,10 +266,10 @@ def analyze(sample_size, dimension, repeat, filename, simulation):
         devs_y = []
         for i in xrange(repeat):
             test_point = simulation_func(1,
-                dimension if independent_var == 'sample size' else var)[0][0]
-            print(test_point)
+                var if independent_var == 'dimension' else dimension,
+                0)[0][0]
             training_x, training_y = simulation_func(*var_to_tuple(var))
-            x_opt = run(training_x, training_y, test_point, intervention_dim=100) # Hack to avoid regularization
+            x_opt = run(training_x, training_y, test_point)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             x_diff, y_diff = simulation_eval(x_opt)
@@ -306,7 +282,7 @@ def analyze(sample_size, dimension, repeat, filename, simulation):
 
     print("Correct intervention dimension was identified in {} out of {} runs."\
           .format(correct_dim_found_count, len(var_array) * repeat))
-    xlim = (0, math.ceil(var_array[-1] * 1.03))
+    xlim = (0, var_array[-1] * 1.03)
     plt.figure(num=None, figsize=(12, 6), dpi=80, facecolor='w', edgecolor='k')
 
     plt.subplot(121)
@@ -332,13 +308,16 @@ def analyze(sample_size, dimension, repeat, filename, simulation):
 
 def main():
     sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200, 300])
+    dimensions_array = np.arange(2, 16)
+    noise_array = np.arange(0.1, 1.05, 0.1)
     dimension = 10
     sample_size = 100
-    dimensions_array = np.arange(2, 16)
-    repeat = 2
-    for trial in ['parabola', 'paraboloid', 'sine', 'line', 'plane', 'corrugated_curve']:
-        exec "analyze(sample_size_array, dimension, repeat, 'plots/{trial}_ss.png', {trial})".format(trial=trial)
-        exec "analyze(sample_size, dimensions_array, repeat, 'plots/{trial}_d.png', {trial})".format(trial=trial)
+    noise = 0.2
+    repeat = 10
+    for trial in ['plane']:#['parabola', 'paraboloid', 'sine', 'line', 'plane', 'corrugated_curve']:
+        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial})".format(trial=trial)
+        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial})".format(trial=trial)
+        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial})".format(trial=trial)
 
 if __name__ == "__main__":
     main()
