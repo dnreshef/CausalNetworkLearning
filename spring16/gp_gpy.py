@@ -180,7 +180,7 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         dmu_dX = dmu_dX.reshape((dmu_dX.size,))
         dv_dX = dv_dX[0]
         ret = y_mu + FIVE_PERCENTILE_ZSCORE * np.sqrt(y_var)
-        grad = dmu_dX - FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX
+        grad = dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX
         return ret, grad
 
     def acq(x, y):
@@ -189,8 +189,9 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         return ret[0][0]
 
     # Validate plane
-    check_gradient(objective_and_grad, 10, 0)
-    check_gradient(objective_and_grad, 10, 1)
+    #check_gradient(lambda x: (model.predict(x.reshape((1, 10)))[1][0][0], model.predictive_gradients(x.reshape((1, 10)))[1].reshape((10,))), 10, 0)
+    #check_gradient(objective_and_grad, 10, 0)
+    #check_gradient(objective_and_grad, 10, 1)
 
     print("Optimized gp parameters. Now finding optimal intervention.")
     print("Test point:", test_point)
@@ -213,8 +214,8 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         print("Test point will be reinitialized to", opt)
 
         # For plane
-        if not np.all((opt - current_test_point)[:2] >= 0):
-            plot_2D(model.predict, D, 1e-2)
+        #if not np.all((opt - current_test_point)[:2] >= 0):
+        #    plot_2D(model.predict, D, 1e-2)
 
         current_test_point = opt
         #print("Acquisition:", objective_and_grad(current_test_point)[0])
@@ -309,15 +310,15 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation):
 def main():
     sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200, 300])
     dimensions_array = np.arange(2, 16)
-    noise_array = np.arange(0.1, 1.05, 0.1)
+    noise_array = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9])
     dimension = 10
     sample_size = 100
     noise = 0.2
-    repeat = 10
-    for trial in ['plane']:#['parabola', 'paraboloid', 'sine', 'line', 'plane', 'corrugated_curve']:
+    repeat = 150
+    for trial in ['parabola', 'paraboloid', 'sine', 'line', 'plane', 'corrugated_curve']:
         exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial})".format(trial=trial)
-        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial})".format(trial=trial)
-        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial})".format(trial=trial)
+        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial})".format(trial=trial)
+        exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial})".format(trial=trial)
 
 if __name__ == "__main__":
     main()
