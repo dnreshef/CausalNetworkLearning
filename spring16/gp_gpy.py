@@ -37,41 +37,55 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=No
         o, g = objective_and_grad(x)
         return -o, -g
 
-    reg_constants = None
-    if intervention_dim is not None:
-        reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
-    else:
+    if intervention_dim is None:
         x_opt = minimize(negative_objective,
                          test_point,
                          method='BFGS',
                          jac=True,
                          options={'disp':False}).x
         return x_opt
+    #reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
+    l = 100.0
 
-    # Identify dimensions to be optimized
-    log_search = True
     last_dim_diff = None
     x_opt = None
-    while len(reg_constants) > 0:
-        l = reg_constants.pop()
+    # Initialize upper bound
+    while True:
         print("Trying l=", l)
         x_opt = gd_soft_threshold(negative_objective, test_point, l)
         if np.count_nonzero(x_opt != test_point) > intervention_dim:
-            assert last_dim_diff is not None
-            if log_search:
-                reg_constants = (np.arange(2, 10) * l).tolist()
-                log_search = False
-            else: 
-                break
+            l *= 100
         else:
             last_dim_diff = x_opt != test_point
+            break
+
+    # Binary search
+    ub = l
+    lb = 0
+    iteration = 0
+    while True:
+        if iteration >= 20:
+            break
+        l = (lb + ub) / 2
+        print("Trying l=", l)
+        x_opt = gd_soft_threshold(negative_objective, test_point, l)
+        sparsity = np.count_nonzero(x_opt != test_point)
+        if sparsity > intervention_dim:
+            lb = l
+        elif sparsity < intervention_dim:
+            last_dim_diff = x_opt != test_point
+            ub = l
+        else:
+            last_dim_diff = x_opt != test_point
+            break
+        iteration += 1
 
     # If dimensions found, now optimize without regularization
     if np.count_nonzero(last_dim_diff) == 0:
         print("I couldn't optimize the test point at all.")
         return test_point
     else: 
-        print("Optimizing these dimensions:",last_dim_diff)
+        print("Optimizing these dimensions:", last_dim_diff)
         restricted_opt = minimize(restricted_objective(last_dim_diff),
                                   test_point[last_dim_diff],
                                   jac=True,
