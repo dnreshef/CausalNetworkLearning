@@ -2,15 +2,14 @@
 from __future__ import print_function
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import cm
 from scipy.optimize import minimize
 from simulation import *
+from plotting import *
 from validation import check_gradient
 import GPy
-import GPyOpt
 import sys
 
-def find_sparse_intervention(objective_and_grad, test_point, intervention_dim):
+def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=None):
     """
     Finds an intervention constrained to differ from the test point in at most
     intervention_dim dimensions.
@@ -26,25 +25,28 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim):
     Returns:
         numpy.ndarray: 1D array of length test_point.size, the optimal intervention
     """
-    negate_tuple = lambda tup: tuple(-1 * x for x in tup)
     def restricted_objective(dims):
         def fun(x):
             guess = np.copy(test_point)
             guess[dims] = x
-            return negate_tuple(objective_and_grad(guess))
+            obj, grad = objective_and_grad(guess)
+            return -obj, -grad[dims]
         return fun
 
-    def regularized_objective(l):
-        def fun(x):
-            o, g = objective_and_grad(x)
-            return -o + l * np.linalg.norm(x - test_point, ord=1), -g + l * np.sign(x - test_point)
-        return fun
+    def negative_objective(x):
+        o, g = objective_and_grad(x)
+        return -o, -g
 
-    reg_constants = [0]
+    reg_constants = None
     if intervention_dim is not None:
         reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
     else:
-        intervention_dim = float('inf')
+        x_opt = minimize(negative_objective,
+                         test_point,
+                         method='BFGS',
+                         jac=True,
+                         options={'disp':False}).x
+        return x_opt
 
     # Identify dimensions to be optimized
     log_search = True
@@ -53,11 +55,7 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim):
     while len(reg_constants) > 0:
         l = reg_constants.pop()
         print("Trying l=", l)
-        x_opt = minimize(regularized_objective(l),
-                         test_point,
-                         method='BFGS',
-                         jac=True,
-                         options={'disp':False}).x
+        x_opt = gd_soft_threshold(negative_objective, test_point, l)
         if np.count_nonzero(x_opt != test_point) > intervention_dim:
             assert last_dim_diff is not None
             if log_search:
@@ -82,56 +80,51 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim):
         ret[last_dim_diff] = restricted_opt
         return ret
 
-def plot_acquisition(acquisition_func, granularity):
-    """
-    Plots a function of two variables, from -100*granularity to 100*granularity
-    in both x and y axes.
+def gd_soft_threshold(objective_and_grad, initial, l):
+    prev = float('inf')
+    point = np.zeros(initial.size)
+    iteration = 0
+    prev_grad = 0
+    eta = 1.
+    beta = 0.5
+    while True:
+        o, grad = objective_and_grad(point + initial)
+        o += l * np.linalg.norm(point, ord=1)
+        if prev - o < 1e-9 and iteration >= 10:
+            return point + initial
+        elif prev - o < (eta/2) * np.linalg.norm(prev_grad)**2:
+            eta = eta * beta
+        prev = o
+        prev_grad = grad
+        update = grad * eta
+        point = point - update
+        point = np.sign(point) * np.maximum(np.abs(point) - l * eta, 0)
+        iteration += 1
 
-    Args:
-        acquisition_func (function): Accepts two floats and outputs a float
-        granularity (float): Level of zoom.
+def run_population(training_x, training_y):
+    FIVE_PERCENTILE_ZSCORE = -1.645
+    D = training_x.shape[1]
+    print("=" * 60)
+    print("Running with sample size {ss} in a {d}-D space".format(
+        ss=training_x.shape[0], d=D))
+    x, y = training_x, training_y
+    y = y.flatten()
 
-    Returns: None
-    """
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    X = np.arange(-100* granularity, 101* granularity, granularity)
-    Y = np.arange(-100* granularity, 101* granularity, granularity)
-    X, Y = np.meshgrid(X, Y)
-    F = np.vectorize(acquisition_func)
-    Z = F(X, Y)
-    surf = ax.plot_surface(X, Y, Z, rstride=1, cstride=1, cmap=cm.coolwarm,
-                                   linewidth=0, antialiased=False)
-    fig.colorbar(surf, shrink=0.5, aspect=5)
-    plt.show()
+    kernel = GPy.kern.RBF(D, ARD=True)
+    model = GPy.models.GPRegression(training_x, training_y, kernel)
 
-def plot_2D(predict, D, granularity):
-    # Only works with the first two dims being relevant
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    X = np.arange(-100* granularity, 101* granularity, granularity)
-    Y = np.arange(-100* granularity, 101* granularity, granularity)
-    X, Y = np.meshgrid(X, Y)
-    z = np.hstack((X.reshape((X.size, 1)), Y.reshape((Y.size, 1)), np.zeros((X.size, D-2))))
-    zmu, zs2 = predict(z)
-    Z = np.reshape(zmu - 1.645 * np.sqrt(zs2), X.shape)
-    surf = ax.plot_surface(X, Y, Z, rstride=1, cstride=1, cmap=cm.coolwarm,
-                                   linewidth=0, antialiased=False)
-    fig.colorbar(surf, shrink=0.5, aspect=5)
-    plt.show()
+    model.optimize()
 
-def plot_1D(predict, D):
-    # Only works for range [-1, 1] with the last dimension being relevant
-    x = np.arange(-1, 1 - 1e-14, 1e-2)
-    print(x.size)
-    X = np.hstack((np.zeros((200, D-1)), x.reshape((200, 1))))
-    ymu, ys2 = predict(X)
-    ymu = ymu.flatten()
-    ys = np.sqrt(ys2.flatten())
-    plt.plot(x, ymu-1.645*ys)
-    #plt.plot(x, ymu, ls='None', marker='+')
-    #plt.fill_between(x, ymu - 1.645 * ys, ymu + 1.645 * ys, facecolor=[0.7539, 0.89453125, 0.62890625, 1.0], linewidths=0)
-    plt.show()
+    def population_objective_and_grad(x_diff):
+        new_pop = x + np.tile(x_diff, (len(x), 1))
+        y_mu, y_var = model.predict(new_pop)
+        ret = np.sum(y_mu + FIVE_PERCENTILE_ZSCORE * np.sqrt(y_var))
+        dmu_dX, dv_dX = model.predictive_gradients(new_pop)
+        dmu_dX = dmu_dX[:,:,0]
+        grad = np.sum(dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX, axis=0) 
+        return ret/len(x), grad/len(x)
+
+    return find_sparse_intervention(population_objective_and_grad, np.zeros(D))
 
 def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None):
     """
@@ -174,9 +167,9 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
 
     def objective_and_grad(x_star):
         x = x_star.reshape((1, x_star.size))
-        y_mu, y_cov = model.predict(x)
+        y_mu, y_var = model.predict(x)
         y_mu = y_mu[0][0]
-        y_var = y_cov[0][0]
+        y_var = y_var[0][0]
         dmu_dX, dv_dX = model.predictive_gradients(x)
         dmu_dX = dmu_dX.reshape((dmu_dX.size,))
         dv_dX = dv_dX[0]
@@ -203,29 +196,20 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     orig_variance = kernel.variance.copy()
     current_test_point = test_point
     model.kern.lengthscale.fix()
-    for i in xrange(0, -1, -1):
-        #print("Lengthscales multiplied by {}".format(np.exp(i)))
-        #model.kern.lengthscale = np.exp(i) * orig_lengthscale
-
+    for i in (4, 2, 1):
+        model.kern.lengthscale = i * orig_lengthscale
         # Recompute variance and noise scale
-        #model.optimize()
+        model.optimize()
 
         opt = find_sparse_intervention(
             objective_and_grad, current_test_point, intervention_dim)
         print("Test point will be reinitialized to", opt)
 
-        # For plane
-        #if not np.all((opt - current_test_point)[:2] >= 0):
-        #    plot_2D(model.predict, D, 1e-2)
-
         current_test_point = opt
-        #print("Acquisition:", objective_and_grad(current_test_point)[0])
-        mean, var = model.predict(current_test_point.reshape((1, current_test_point.size)))
-        #print("Mean:", mean)
-        #print("Var:", var)
+        #print("Acquisition and gradient:", objective_and_grad(current_test_point))
 
         if plot_dims is not None:
-            model.plot(fixed_inputs=gpy_plot_fixed_inputs, plot_limits=[-1e-8, 1e-8])
+            model.plot(fixed_inputs=gpy_plot_fixed_inputs)
             plt.show()
 
         print()
@@ -234,7 +218,8 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     print()
     return current_test_point
 
-def analyze(sample_size, dimension, noise, repeat, filename, simulation):
+def analyze(sample_size, dimension, noise, repeat, filename, simulation,
+            population=False):
     simulation_func, simulation_eval, correct_dims = simulation
 
     avg_x_diff = []
@@ -270,7 +255,11 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation):
                 var if independent_var == 'dimension' else dimension,
                 0)[0][0]
             training_x, training_y = simulation_func(*var_to_tuple(var))
-            x_opt = run(training_x, training_y, test_point)
+            if population:
+                x_opt = run_population(training_x, training_y)
+            else:
+                x_opt = run(training_x, training_y, test_point,
+                            intervention_dim=correct_dims.size)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             x_diff, y_diff = simulation_eval(x_opt)
@@ -308,19 +297,34 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation):
         plt.show()
 
 def main():
-    sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200, 300])
+    # Define constants
+    sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200, 300, 500])
     dimensions_array = np.arange(2, 16)
     noise_array = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9])
     dimension = 10
     sample_size = 100
     noise = 0.2
+
     if len(sys.argv) <= 2:
-        sys.exit('Usage: ./gp_gpy.py runs simulation1 simulation2 ...')
-    repeat = int(sys.argv[1])
-    for trial in sys.argv[2:]:
-        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial})".format(trial=trial)
-        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial})".format(trial=trial)
-        exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial})".format(trial=trial)
+        sys.exit('Usage: ./gp_gpy.py [--population] runs simulation1 simulation2 ...')
+    # Parse options
+    flags = set()
+    args = []
+    for arg in sys.argv:
+        if arg[:2] == "--":
+            flags.add(arg[2:])
+        else:
+            args.append(arg)
+    repeat = int(args[1])
+    pop = ""
+    if "population" in flags:
+        pop = ", population=True"
+
+    # Execute trials
+    for trial in args[2:]:
+        exec "analyze(sample_size_array, dimension, noise, repeat, None, {trial}{pop})".format(trial=trial, pop=pop)
+        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial}{pop})".format(trial=trial, pop=pop)
+        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop})".format(trial=trial, pop=pop)
 
 if __name__ == "__main__":
     main()
