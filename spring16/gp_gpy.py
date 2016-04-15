@@ -9,7 +9,7 @@ from validation import check_gradient
 import GPy
 import sys
 
-def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=None):
+def find_sparse_intervention(objective_and_grad, test_point, initial_guess, intervention_dim=None):
     """
     Finds an intervention constrained to differ from the test point in at most
     intervention_dim dimensions.
@@ -18,7 +18,8 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=No
         objective_and_grad (function): Accepts 1D array of length
             test_point.size, outputs objective, gradient (float, numpy.ndarray)
             The objective function is maximized.
-        test_point (numpy.ndarray): 1D array representing the initial guess
+        test_point (numpy.ndarray): point to find intervention on
+        initial_guess (numpy.ndarray): 1D array representing the initial guess
         intervention_dim (int): Max number of dimensions in which intervention
             can differ from test_point. If none, optimization is unconstrained.
 
@@ -39,7 +40,7 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=No
 
     if intervention_dim is None:
         x_opt = minimize(negative_objective,
-                         test_point,
+                         initial_guess,
                          method='BFGS',
                          jac=True,
                          options={'disp':False}).x
@@ -52,7 +53,7 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=No
     # Initialize upper bound
     while True:
         print("Trying l=", l)
-        x_opt = gd_soft_threshold(negative_objective, test_point, l)
+        x_opt = gd_soft_threshold(negative_objective, test_point, initial_guess, l)
         if np.count_nonzero(x_opt != test_point) > intervention_dim:
             l *= 100
         else:
@@ -68,7 +69,7 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=No
             break
         l = (lb + ub) / 2
         print("Trying l=", l)
-        x_opt = gd_soft_threshold(negative_objective, test_point, l)
+        x_opt = gd_soft_threshold(negative_objective, test_point, initial_guess, l)
         sparsity = np.count_nonzero(x_opt != test_point)
         if sparsity > intervention_dim:
             lb = l
@@ -94,25 +95,25 @@ def find_sparse_intervention(objective_and_grad, test_point, intervention_dim=No
         ret[last_dim_diff] = restricted_opt
         return ret
 
-def gd_soft_threshold(objective_and_grad, initial, l):
+def gd_soft_threshold(objective_and_grad, center, guess, l):
     prev = float('inf')
-    point = np.zeros(initial.size)
+    diff = guess - center
     iteration = 0
     prev_grad = 0
     eta = 1.
     beta = 0.5
     while True:
-        o, grad = objective_and_grad(point + initial)
-        o += l * np.linalg.norm(point, ord=1)
+        o, grad = objective_and_grad(diff + center)
+        o += l * np.linalg.norm(diff, ord=1)
         if prev - o < 1e-9 and iteration >= 10:
-            return point + initial
+            return diff + center
         elif prev - o < (eta/2) * np.linalg.norm(prev_grad)**2:
             eta = eta * beta
         prev = o
         prev_grad = grad
         update = grad * eta
-        point = point - update
-        point = np.sign(point) * np.maximum(np.abs(point) - l * eta, 0)
+        diff = diff - update
+        diff = np.sign(diff) * np.maximum(np.abs(diff) - l * eta, 0)
         iteration += 1
 
 def run_population(training_x, training_y):
@@ -138,7 +139,7 @@ def run_population(training_x, training_y):
         grad = np.sum(dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX, axis=0) 
         return ret/len(x), grad/len(x)
 
-    return find_sparse_intervention(population_objective_and_grad, np.zeros(D))
+    return find_sparse_intervention(population_objective_and_grad, np.zeros(D), np.zeros(D))
 
 def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None):
     """
@@ -205,10 +206,22 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     print("Test point:", test_point)
     print()
 
+    # Optimization restarts routine for testing
+    print("Optimizing with optimization restarts and no sparsity")
+    best_o = -float('inf')
+    best_point = None
+    for i in xrange(10):
+        opt = find_sparse_intervention(objective_and_grad, test_point, x[np.random.randint(0, len(x))])
+        o, g = objective_and_grad(opt)
+        if o > best_o:
+            best_o = o
+            best_point = opt
+    return best_point
+
     # Smoothing
     orig_lengthscale = kernel.lengthscale.copy()
     orig_variance = kernel.variance.copy()
-    current_test_point = test_point
+    current_guess = test_point
     model.kern.lengthscale.fix()
     for i in (4, 2, 1):
         model.kern.lengthscale = i * orig_lengthscale
@@ -216,11 +229,11 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         model.optimize()
 
         opt = find_sparse_intervention(
-            objective_and_grad, current_test_point, intervention_dim)
+            objective_and_grad, test_point, current_guess, intervention_dim)
         print("Test point will be reinitialized to", opt)
 
-        current_test_point = opt
-        #print("Acquisition and gradient:", objective_and_grad(current_test_point))
+        current_guess = opt
+        #print("Acquisition and gradient:", objective_and_grad(current_guess))
 
         if plot_dims is not None:
             model.plot(fixed_inputs=gpy_plot_fixed_inputs)
@@ -230,7 +243,7 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         model.kern.variance = orig_variance
 
     print()
-    return current_test_point
+    return current_guess
 
 def analyze(sample_size, dimension, noise, repeat, filename, simulation,
             population=False):
@@ -274,6 +287,8 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation,
             else:
                 x_opt = run(training_x, training_y, test_point,
                             intervention_dim=correct_dims.size)
+            print(x_opt)
+            print(test_point)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             x_diff, y_diff = simulation_eval(x_opt)
