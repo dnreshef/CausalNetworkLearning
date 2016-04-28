@@ -6,6 +6,7 @@ from scipy.optimize import minimize
 from simulation import *
 from plotting import *
 from validation import check_gradient
+from my_predictive_gradients import my_predictive_gradient
 import GPy
 import sys
 
@@ -50,11 +51,18 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
         negative_objective = lambda x: -objective_and_grad(x)
 
     if intervention_dim is None:
-        x_opt = minimize(negative_objective,
+        if constrained:
+            x_opt = minimize(negative_objective,
+                         initial_guess,
+                         method='L-BFGS-B',
+                         jac=jac,
+                         bounds=zip(test_point-2,test_point+2),
+                         options={'disp':False}).x
+        else:
+            x_opt = minimize(negative_objective,
                          initial_guess,
                          method='BFGS',
                          jac=jac,
-                         bounds=zip(test_point-2,test_point+2) if constrained else None,
                          options={'disp':False}).x
         return x_opt
     #reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
@@ -153,7 +161,7 @@ def run_population(training_x, training_y):
 
     return find_sparse_intervention(population_objective_and_grad, np.zeros(D), np.zeros(D))
 
-def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None, constrained=True):
+def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None, constrained=False):
     """
     Runs the intervention optimization routine. A model is trained from
     training_x and training_y, and is used to find a sparse intervention on
@@ -195,18 +203,19 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     def get_objective_and_grad(test_point):
         def objective_and_grad(x_star):
             x = np.vstack((x_star, test_point))
-            y_mu, y_var = model.predict(x, full_cov=True)
-            y_mu = y_mu[0][0]
-            y_var = y_var[0][0] - 2 * y_var[1][0] + y_var[1][1]
-            ret = y_mu + FIVE_PERCENTILE_ZSCORE * np.sqrt(y_var)
-            return ret
-            dmu_dX, dv_dX = model.predictive_gradients(x)
-            print(dmu_dX, dmu_dX.shape)
-            print('=' * 70)
-            print(dv_dX, dv_dX.shape)
+            y_mu, y_var = model.predict(x, full_cov=True, include_likelihood=False)
+            y_mu = y_mu[0][0] - y_mu[1][0]
+            y_var = y_var[0][0] + y_var[1][1] - 2.0 * y_var[1][0]
+            if (y_var < 0) or (np.linalg.norm(test_point - x_star) < 1e-15):
+                y_var = 0
+            yvar_root = np.sqrt(y_var)
+            ret = y_mu + FIVE_PERCENTILE_ZSCORE * yvar_root
+            dmu_dX, dv_dX = my_predictive_gradient(x_star.reshape(1, x_star.size), model, test_point)
             dmu_dX = dmu_dX.reshape((dmu_dX.size,))
             dv_dX = dv_dX[0]
-            grad = dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX
+            if yvar_root < 1e-9:
+                yvar_root = 19
+            grad = dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / yvar_root) * dv_dX
             return ret, grad
         return objective_and_grad
 
@@ -250,7 +259,7 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
 
         objective_and_grad = get_objective_and_grad(test_point)
         opt = find_sparse_intervention(
-            objective_and_grad, test_point, current_guess, intervention_dim, jac=False)
+            objective_and_grad, test_point, current_guess, intervention_dim, constrained=constrained)
         print("Test point will be reinitialized to", opt)
 
         current_guess = opt
@@ -267,8 +276,8 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     return current_guess
 
 def analyze(sample_size, dimension, noise, repeat, filename, simulation,
-            population=False):
-    simulation_func, simulation_eval, correct_dims = simulation
+            population=False, constrained=False):
+    simulation_func, simulation_eval, true_opt, correct_dims = simulation
 
     avg_y_gain = []
     std_devs_y = []
@@ -294,25 +303,30 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation,
         sys.exit('Analyze called with incorrect syntax.')
 
     test_points = simulation_func(repeat,
-        var if independent_var == 'dimension' else dimension,
+        dimension[-1] if independent_var == 'dimension' else dimension,
         0)[0]
-    initial_errs = [simulation_eval(test_point) for test_point in test_points]
+    initial_vals = [simulation_eval(test_point) for test_point in test_points]
 
     for var in var_array:
         y_gain = []
         for i in xrange(repeat):
             test_point = test_points[i]
-            initial_err = initial_errs[i]
+            if independent_var == "dimension":
+                if 0 in correct_dims:
+                    test_point = test_point[:var]
+                else:
+                    test_point = test_point[-var:]
+            initial_val = initial_vals[i]
             training_x, training_y = simulation_func(*var_to_tuple(var))
             if population:
                 x_opt = run_population(training_x, training_y)
             else:
-                x_opt = run(training_x, training_y, test_point)
+                x_opt = run(training_x, training_y, test_point, constrained=constrained)
 #                            intervention_dim=correct_dims.size)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
-            final_err = simulation_eval(x_opt)
-            y_gain.append(initial_err - final_err)
+            final_val = simulation_eval(x_opt)
+            y_gain.append(final_val - initial_val)
         avg_y_gain.append(sum(y_gain) / repeat)
         std_devs_y.append(np.std(y_gain))
 
@@ -321,12 +335,12 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation,
     xlim = (0, var_array[-1] * 1.03)
     plt.figure(num=None, figsize=(6, 6), dpi=80, facecolor='w', edgecolor='k')
 
-    plt.title('objective difference vs {}'.format(independent_var))
+    plt.title('objective gain vs {}'.format(independent_var))
     plt.xlabel(independent_var)
-    plt.ylabel('objective difference')
+    plt.ylabel('objective gain')
     plt.xlim(xlim)
     plt.plot(var_array, avg_y_gain, ls='-', marker='o')
-    plt.hlines(sum(initial_errs) / repeat, xlim[0], xlim[1], linestyles='dashed')
+    plt.hlines(true_opt if constrained else true_opt - sum(initial_vals) / repeat, xlim[0], xlim[1], linestyles='dashed')
     #plt.errorbar(var_array, avg_y_gain, yerr=np.array(std_devs_y))
 
     if filename:
@@ -360,9 +374,15 @@ def main():
 
     # Execute trials
     for trial in args[2:]:
-        exec "analyze(sample_size_array, dimension, noise, repeat, None, {trial}{pop})".format(trial=trial, pop=pop)
-#        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial}{pop})".format(trial=trial, pop=pop)
-#        exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop})".format(trial=trial, pop=pop)
+        constrained = ""
+        if trial == "plane" or trial == "line":
+            constrained = ", constrained=True"
+        #exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial}{pop}{constrained})".format(
+        #        trial=trial, pop=pop, constrained=constrained)
+        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial}{pop}{constrained})".format(
+        #        trial=trial, pop=pop, constrained=constrained)
+        exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop}{constrained})".format(
+                trial=trial, pop=pop, constrained=constrained)
 
 if __name__ == "__main__":
     main()
