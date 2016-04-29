@@ -136,7 +136,7 @@ def gd_soft_threshold(objective_and_grad, center, guess, l):
         diff = np.sign(diff) * np.maximum(np.abs(diff) - l * eta, 0)
         iteration += 1
 
-def run_population(training_x, training_y):
+def run_population(training_x, training_y, constrained=True):
     FIVE_PERCENTILE_ZSCORE = -1.645
     D = training_x.shape[1]
     print("=" * 60)
@@ -151,15 +151,28 @@ def run_population(training_x, training_y):
     model.optimize()
 
     def population_objective_and_grad(x_diff):
-        new_pop = x + np.tile(x_diff, (len(x), 1))
-        y_mu, y_var = model.predict(new_pop)
-        ret = np.sum(y_mu + FIVE_PERCENTILE_ZSCORE * np.sqrt(y_var))
-        dmu_dX, dv_dX = model.predictive_gradients(new_pop)
-        dmu_dX = dmu_dX[:,:,0]
-        grad = np.sum(dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / np.sqrt(y_var)) * dv_dX, axis=0)
+        ret = 0
+        grad = np.zeros(D)
+        for point in x:
+            new_point = point + x_diff
+            y_mu, y_var = model.predict(np.vstack((new_point, point)), full_cov=True)
+            y_mu = y_mu[0][0] - y_mu[1][0]
+            y_var = y_var[0][0] + y_var[1][1] - 2.0 * y_var[1][0]
+            if (y_var < 0) or (np.linalg.norm(point - new_point) < 1e-15):
+                y_var = 0
+            yvar_root = np.sqrt(y_var)
+            ret += y_mu + FIVE_PERCENTILE_ZSCORE * yvar_root
+            dmu_dX, dv_dX = my_predictive_gradient(new_point.reshape(1, new_point.size), model, point)
+            dmu_dX = dmu_dX.reshape((dmu_dX.size,))
+            dv_dX = dv_dX[0]
+            if yvar_root < 1e-9:
+                yvar_root = 1
+            grad += dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / yvar_root) * dv_dX
         return ret/len(x), grad/len(x)
 
-    return find_sparse_intervention(population_objective_and_grad, np.zeros(D), np.zeros(D))
+    ret = find_sparse_intervention(population_objective_and_grad, np.zeros(D), np.zeros(D), constrained=constrained)
+    print("Population intervention is", ret)
+    return ret
 
 def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None, constrained=False):
     """
@@ -214,7 +227,7 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
             dmu_dX = dmu_dX.reshape((dmu_dX.size,))
             dv_dX = dv_dX[0]
             if yvar_root < 1e-9:
-                yvar_root = 19
+                yvar_root = 1
             grad = dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / yvar_root) * dv_dX
             return ret, grad
         return objective_and_grad
@@ -310,6 +323,13 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation,
     for var in var_array:
         y_gain = []
         for i in xrange(repeat):
+            training_x, training_y = simulation_func(*var_to_tuple(var))
+            if population:
+                if not constrained:
+                    sys.exit("We do not support unconstrained optimization for populations (yet).")
+                x_opt = run_population(training_x, training_y)
+                y_gain.append(simulation_eval(x_opt))
+                continue
             test_point = test_points[i]
             if independent_var == "dimension":
                 if 0 in correct_dims:
@@ -317,12 +337,8 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation,
                 else:
                     test_point = test_point[-var:]
             initial_val = initial_vals[i]
-            training_x, training_y = simulation_func(*var_to_tuple(var))
-            if population:
-                x_opt = run_population(training_x, training_y)
-            else:
-                x_opt = run(training_x, training_y, test_point, constrained=constrained)
-#                            intervention_dim=correct_dims.size)
+            x_opt = run(training_x, training_y, test_point, constrained=constrained,
+                        intervention_dim=correct_dims.size)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             final_val = simulation_eval(x_opt)
@@ -377,10 +393,10 @@ def main():
         constrained = ""
         if trial == "plane" or trial == "line":
             constrained = ", constrained=True"
-        #exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial}{pop}{constrained})".format(
-        #        trial=trial, pop=pop, constrained=constrained)
-        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial}{pop}{constrained})".format(
-        #        trial=trial, pop=pop, constrained=constrained)
+        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial}{pop}{constrained})".format(
+                trial=trial, pop=pop, constrained=constrained)
+        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial}{pop}{constrained})".format(
+                trial=trial, pop=pop, constrained=constrained)
         exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop}{constrained})".format(
                 trial=trial, pop=pop, constrained=constrained)
 
