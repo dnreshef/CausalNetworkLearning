@@ -23,7 +23,8 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
         test_point (numpy.ndarray): point to find intervention on
         initial_guess (numpy.ndarray): 1D array representing the initial guess
         intervention_dim (int): Max number of dimensions in which intervention
-            can differ from test_point. If none, optimization is unconstrained.
+            can differ from test_point. If None, optimization is unconstrained.
+            If not None, jac=True.
 
     Returns:
         numpy.ndarray: 1D array of length test_point.size, the optimal intervention
@@ -174,7 +175,8 @@ def run_population(training_x, training_y, constrained=True):
     print("Population intervention is", ret)
     return ret
 
-def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=None, constrained=False):
+def run(training_x, training_y, test_point, correct_dims=None, plot=False,
+        constrained=False, smoothing=False, sparsity=False, restarts=False, mean_acq=False):
     """
     Runs the intervention optimization routine. A model is trained from
     training_x and training_y, and is used to find a sparse intervention on
@@ -186,8 +188,6 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         training_y (numpy.ndarray): m x 1 array with the y-value of the
             training data
         test_point (numpy.ndarray): The test point, a 1D array of length m
-        plot_dims (numpy.ndarray): If plot_dims is specified, this must
-            be a 1D array with the indices of the dimensions to be plotted.
         intervention_dim (int): Max number of dimensions in which the
             intervention can differ from test_point. If None, optimization is
             unconstrained.
@@ -200,9 +200,9 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     print("=" * 60)
     print("Running with sample size {ss} in a {d}-D space".format(
         ss=training_x.shape[0], d=D))
-    if plot_dims is not None:
+    if plot:
         correct_dims = set(dim_index if dim_index >= 0 else D + dim_index\
-            for dim_index in plot_dims)
+            for dim_index in correct_dims)
         gpy_plot_fixed_inputs = [(i, 0) for i in xrange(D) if i not in correct_dims]
 
     x, y = training_x, training_y
@@ -214,6 +214,15 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
     model.optimize()
 
     def get_objective_and_grad(test_point):
+        if mean_acq:
+            def objective_and_grad(x_star):
+                x = x_star.reshape((1, x_star.size))
+                y_mu, y_var = model.predict(x, include_likelihood=False)
+                y_mu = y_mu[0][0]
+                dmu_dX, dv_dX = model.predictive_gradients(x)
+                dmu_dX = dmu_dX.reshape((dmu_dX.size,))
+                return y_mu, dmu_dX
+            return objective_and_grad
         def objective_and_grad(x_star):
             x = np.vstack((x_star, test_point))
             y_mu, y_var = model.predict(x, full_cov=True, include_likelihood=False)
@@ -237,64 +246,58 @@ def run(training_x, training_y, test_point, plot_dims=None, intervention_dim=Non
         ret, = model.likelihood.predictive_quantiles(fmu, fv, (5,))
         return ret[0][0]
 
-    # Validate plane
-    #check_gradient(lambda x: (model.predict(x.reshape((1, 10)))[1][0][0], model.predictive_gradients(x.reshape((1, 10)))[1].reshape((10,))), 10, 0)
-    #check_gradient(objective_and_grad, 10, 0)
-    #check_gradient(objective_and_grad, 10, 1)
-
     print("Optimized gp parameters. Now finding optimal intervention.")
     print("Test point:", test_point)
     print()
 
     # Optimization restarts routine for testing
-    """
-    print("Optimizing with optimization restarts and no sparsity")
-    best_o = -float('inf')
-    best_point = None
-    for i in xrange(10):
-        opt = find_sparse_intervention(objective_and_grad, test_point, x[np.random.randint(0, len(x))])
-        o, g = objective_and_grad(opt)
-        if o > best_o:
-            best_o = o
-            best_point = opt
-    return best_point
-    """
+    if restarts:
+        print("Optimizing with optimization restarts and no sparsity")
+        best_o = -float('inf')
+        best_point = None
+        for i in xrange(10):
+            objective_and_grad = get_objective_and_grad(test_point)
+            opt = find_sparse_intervention(objective_and_grad, test_point,
+                                           x[np.random.randint(0, len(x))])
+            o, g = objective_and_grad(opt)
+            if o > best_o:
+                best_o = o
+                best_point = opt
+        print("We found that the best point is", best_point)
+        return best_point
 
     # Smoothing
     orig_lengthscale = kernel.lengthscale.copy()
     orig_variance = kernel.variance.copy()
     current_guess = test_point
     model.kern.lengthscale.fix()
-    for i in (4, 2, 1):
-        model.kern.lengthscale = i * orig_lengthscale
-        # Recompute variance and noise scale
-        model.optimize()
+    smoothing_values = (4, 2, 1) if smoothing else (1,)
+    for i in smoothing_values:
+        if smoothing:
+            model.kern.lengthscale = i * orig_lengthscale
+            model.optimize()
 
         objective_and_grad = get_objective_and_grad(test_point)
         opt = find_sparse_intervention(
-            objective_and_grad, test_point, current_guess, intervention_dim, constrained=constrained)
+            objective_and_grad, test_point, current_guess,
+            intervention_dim=len(correct_dims) if sparsity else None, constrained=constrained)
         print("Test point will be reinitialized to", opt)
 
         current_guess = opt
         #print("Acquisition and gradient:", objective_and_grad(current_guess))
 
-        if plot_dims is not None:
+        if plot:
             model.plot(fixed_inputs=gpy_plot_fixed_inputs)
             plt.show()
 
         print()
         model.kern.variance = orig_variance
 
-    print()
     return current_guess
 
-def analyze(sample_size, dimension, noise, repeat, filename, simulation,
-            population=False, constrained=False):
+def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
+            constrained=False, population=False):
     simulation_func, simulation_eval, true_opt, correct_dims = simulation
-
-    avg_y_gain = []
-    std_devs_y = []
-    correct_dim_found_count = 0
 
     independent_var = None
     var_array = None
@@ -318,51 +321,70 @@ def analyze(sample_size, dimension, noise, repeat, filename, simulation,
     test_points = simulation_func(repeat,
         dimension[-1] if independent_var == 'dimension' else dimension,
         0)[0]
+    true_opts = np.apply_along_axis(true_opt, 1, test_points)
     initial_vals = [simulation_eval(test_point) for test_point in test_points]
 
-    for var in var_array:
-        y_gain = []
-        for i in xrange(repeat):
-            training_x, training_y = simulation_func(*var_to_tuple(var))
-            if population:
-                if not constrained:
-                    sys.exit("We do not support unconstrained optimization for populations (yet).")
-                x_opt = run_population(training_x, training_y)
-                y_gain.append(simulation_eval(x_opt))
-                continue
-            test_point = test_points[i]
-            if independent_var == "dimension":
-                if 0 in correct_dims:
-                    test_point = test_point[:var]
-                else:
-                    test_point = test_point[-var:]
-            initial_val = initial_vals[i]
-            x_opt = run(training_x, training_y, test_point, constrained=constrained,
-                        intervention_dim=correct_dims.size)
-            if np.all((x_opt != test_point)[correct_dims]):
-                correct_dim_found_count += 1
-            final_val = simulation_eval(x_opt)
-            y_gain.append(final_val - initial_val)
-        avg_y_gain.append(sum(y_gain) / repeat)
-        std_devs_y.append(np.std(y_gain))
+    np.save(file_prefix + "_true_opts", true_opts)
+    np.save(file_prefix + "_initial_vals", initial_vals)
 
-    print("Correct intervention dimension was identified in {} out of {} runs."\
-          .format(correct_dim_found_count, len(var_array) * repeat))
-    xlim = (0, var_array[-1] * 1.03)
-    plt.figure(num=None, figsize=(6, 6), dpi=80, facecolor='w', edgecolor='k')
+    kwargs_set = [dict(), dict(smoothing=True), dict(smoothing=True, sparsity=True),
+                  dict(restarts=True), dict(mean_acq=True)]
+    for kwargs in kwargs_set:
+        print("Running with", kwargs)
+        avg_y_gain = []
+        std_devs_y = []
+        correct_dim_found_count = 0
+        f_values = np.zeros((len(var_array), repeat))
 
-    plt.title('objective gain vs {}'.format(independent_var))
-    plt.xlabel(independent_var)
-    plt.ylabel('objective gain')
-    plt.xlim(xlim)
-    plt.plot(var_array, avg_y_gain, ls='-', marker='o')
-    plt.hlines(true_opt if constrained else true_opt - sum(initial_vals) / repeat, xlim[0], xlim[1], linestyles='dashed')
-    #plt.errorbar(var_array, avg_y_gain, yerr=np.array(std_devs_y))
+        for j in xrange(len(var_array)):
+            var = var_array[j]
+            y_gain = []
+            for i in xrange(repeat):
+                training_x, training_y = simulation_func(*var_to_tuple(var))
+                if population:
+                    if not constrained:
+                        sys.exit("We do not support unconstrained optimization for populations (yet).")
+                    x_opt = run_population(training_x, training_y)
+                    y_gain.append(simulation_eval(x_opt))
+                    continue
+                test_point = test_points[i]
+                if independent_var == "dimension":
+                    if 0 in correct_dims:
+                        test_point = test_point[:var]
+                    else:
+                        test_point = test_point[-var:]
+                initial_val = initial_vals[i]
+                x_opt = run(training_x, training_y, test_point, constrained=constrained,
+                            correct_dims=correct_dims, **kwargs)
+                if np.all((x_opt != test_point)[correct_dims]):
+                    correct_dim_found_count += 1
+                final_val = simulation_eval(x_opt)
+                f_values[j][i] = final_val
+                y_gain.append(final_val - initial_val)
+            avg_y_gain.append(sum(y_gain) / repeat)
+            std_devs_y.append(np.std(y_gain))
 
-    if filename:
-        plt.savefig(filename)
-    else:
-        plt.show()
+        filename = file_prefix + "".join(['_' + key for key in kwargs])
+        np.save(filename, f_values)
+
+        print("Correct intervention dimension was identified in {} out of {} runs."\
+              .format(correct_dim_found_count, len(var_array) * repeat))
+        xlim = (0, var_array[-1] * 1.03)
+        plt.figure(num=None, figsize=(6, 6), dpi=80, facecolor='w', edgecolor='k')
+
+        plt.title('objective gain vs {}'.format(independent_var))
+        plt.xlabel(independent_var)
+        plt.ylabel('objective gain')
+        plt.xlim(xlim)
+        plt.plot(var_array, avg_y_gain, ls='-', marker='o')
+        plt.hlines(np.average(true_opts - initial_vals), xlim[0], xlim[1], linestyles='dashed')
+        #plt.errorbar(var_array, avg_y_gain, yerr=np.array(std_devs_y))
+
+        if file_prefix:
+            plt.savefig(filename)
+        else:
+            plt.show()
+        plt.close()
 
 def main():
     # Define constants
@@ -393,12 +415,12 @@ def main():
         constrained = ""
         if trial == "plane" or trial == "line":
             constrained = ", constrained=True"
-        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss.png', {trial}{pop}{constrained})".format(
+        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss', {trial}{pop}{constrained})".format(
                 trial=trial, pop=pop, constrained=constrained)
-        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d.png', {trial}{pop}{constrained})".format(
+        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d', {trial}{pop}{constrained})".format(
                 trial=trial, pop=pop, constrained=constrained)
-        exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop}{constrained})".format(
-                trial=trial, pop=pop, constrained=constrained)
+        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop}{constrained})".format(
+        #        trial=trial, pop=pop, constrained=constrained)
 
 if __name__ == "__main__":
     main()
