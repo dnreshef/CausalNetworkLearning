@@ -26,49 +26,38 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
         initial_guess (numpy.ndarray): 1D array representing the initial guess
         intervention_dim (int): Max number of dimensions in which intervention
             can differ from test_point. If None, optimization is unconstrained.
-            If not None, jac=True.
 
     Returns:
         numpy.ndarray: 1D array of length test_point.size, the optimal intervention
     """
-    negate_tuple = lambda tup: tuple(-x for x in tup)
     def restricted_objective(dims):
-        if jac:
-            def fun(x):
-                guess = np.copy(test_point)
-                guess[dims] = x
-                obj, grad = objective_and_grad(guess)
-                return -obj, -grad[dims]
-            return fun
-        else:
-            def fun(x):
-                guess = np.copy(test_point)
-                guess[dims] = x
-                return -objective_and_grad(guess)
-            return fun
+        def fun(x):
+            guess = np.copy(test_point)
+            guess[dims] = x
+            obj, grad = objective_and_grad(guess)
+            return -obj, -grad[dims]
+        return fun
 
-    negative_objective = None
-    if jac:
-        negative_objective = lambda x: negate_tuple(objective_and_grad(x))
-    else:
-        negative_objective = lambda x: -objective_and_grad(x)
+    negate_tuple = lambda tup: tuple(-x for x in tup)
+    negative_objective = lambda x: negate_tuple(objective_and_grad(x))
 
-    if intervention_dim is None:
+    def custom_minimize(objective, initial, constrained, test_point):
         if constrained:
-            x_opt = minimize(negative_objective,
-                         initial_guess,
+            return minimize(objective,
+                         initial,
                          method='L-BFGS-B',
-                         jac=jac,
+                         jac=True,
                          bounds=zip(test_point-2,test_point+2),
                          options={'disp':False}).x
         else:
-            x_opt = minimize(negative_objective,
-                         initial_guess,
+            return minimize(objective,
+                         initial,
                          method='BFGS',
-                         jac=jac,
+                         jac=True,
                          options={'disp':False}).x
-        return x_opt
-    #reg_constants = np.power(10.0, np.arange(-7, 7)).tolist()
+
+    if intervention_dim is None:
+        return custom_minimize(negative_objective, initial_guess, constrained, test_point)
     l = 100.0
 
     last_dim_diff = None
@@ -76,7 +65,7 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
     # Initialize upper bound
     while True:
         print("Trying l=", l)
-        x_opt = gd_soft_threshold(negative_objective, test_point, initial_guess, l)
+        x_opt = gd_soft_threshold(negative_objective, test_point, initial_guess, l, constrained)
         if np.count_nonzero(x_opt != test_point) > intervention_dim:
             l *= 100
         else:
@@ -92,7 +81,7 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
             break
         l = (lb + ub) / 2
         print("Trying l=", l)
-        x_opt = gd_soft_threshold(negative_objective, test_point, initial_guess, l)
+        x_opt = gd_soft_threshold(negative_objective, test_point, initial_guess, l, constrained)
         sparsity = np.count_nonzero(x_opt != test_point)
         if sparsity > intervention_dim:
             lb = l
@@ -110,15 +99,15 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
         return test_point
     else:
         print("Optimizing these dimensions:", last_dim_diff)
-        restricted_opt = minimize(restricted_objective(last_dim_diff),
-                                  test_point[last_dim_diff],
-                                  jac=True,
-                                  options={'disp':False}).x
+        restricted_opt = custom_minimize(restricted_objective(last_dim_diff),
+                                  initial_guess[last_dim_diff],
+                                  constrained,
+                                  test_point[last_dim_diff])
         ret = np.copy(test_point)
         ret[last_dim_diff] = restricted_opt
         return ret
 
-def gd_soft_threshold(objective_and_grad, center, guess, l):
+def gd_soft_threshold(objective_and_grad, center, guess, l, constrained):
     prev = float('inf')
     diff = guess - center
     iteration = 0
@@ -128,7 +117,7 @@ def gd_soft_threshold(objective_and_grad, center, guess, l):
     while True:
         o, grad = objective_and_grad(diff + center)
         o += l * np.linalg.norm(diff, ord=1)
-        if prev - o < 1e-9 and iteration >= 10:
+        if prev - o < 1e-9:
             return diff + center
         elif prev - o < (eta/2) * np.linalg.norm(prev_grad)**2:
             eta = eta * beta
@@ -136,48 +125,13 @@ def gd_soft_threshold(objective_and_grad, center, guess, l):
         prev_grad = grad
         update = grad * eta
         diff = diff - update
-        diff = np.sign(diff) * np.maximum(np.abs(diff) - l * eta, 0)
+        if constrained:
+            diff = np.sign(diff) * np.minimum(np.maximum(np.abs(diff) - l * eta, 0), 2)
+        else:
+            diff = np.sign(diff) * np.maximum(np.abs(diff) - l * eta, 0)
         iteration += 1
 
-def run_population(training_x, training_y, constrained=True):
-    FIVE_PERCENTILE_ZSCORE = -1.645
-    D = training_x.shape[1]
-    print("=" * 60)
-    print("Running with sample size {ss} in a {d}-D space".format(
-        ss=training_x.shape[0], d=D))
-    x, y = training_x, training_y
-    y = y.flatten()
-
-    kernel = GPy.kern.RBF(D, ARD=True)
-    model = GPy.models.GPRegression(training_x, training_y, kernel)
-
-    model.optimize()
-
-    def population_objective_and_grad(x_diff):
-        ret = 0
-        grad = np.zeros(D)
-        for point in x:
-            new_point = point + x_diff
-            y_mu, y_var = model.predict(np.vstack((new_point, point)), full_cov=True)
-            y_mu = y_mu[0][0] - y_mu[1][0]
-            y_var = y_var[0][0] + y_var[1][1] - 2.0 * y_var[1][0]
-            if (y_var < 0) or (np.linalg.norm(point - new_point) < 1e-15):
-                y_var = 0
-            yvar_root = np.sqrt(y_var)
-            ret += y_mu + FIVE_PERCENTILE_ZSCORE * yvar_root
-            dmu_dX, dv_dX = my_predictive_gradient(new_point.reshape(1, new_point.size), model, point)
-            dmu_dX = dmu_dX.reshape((dmu_dX.size,))
-            dv_dX = dv_dX[0]
-            if yvar_root < 1e-9:
-                yvar_root = 1
-            grad += dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / yvar_root) * dv_dX
-        return ret/len(x), grad/len(x)
-
-    ret = find_sparse_intervention(population_objective_and_grad, np.zeros(D), np.zeros(D), constrained=constrained)
-    print("Population intervention is", ret)
-    return ret
-
-def run(training_x, training_y, test_point, correct_dims=None, plot=False,
+def run(training_x, training_y, test_point, correct_dims=None, plot=False, population=False,
         constrained=False, smoothing=False, sparsity=False, restarts=False, mean_acq=False):
     """
     Runs the intervention optimization routine. A model is trained from
@@ -241,7 +195,11 @@ def run(training_x, training_y, test_point, correct_dims=None, plot=False,
                 yvar_root = 1
             grad = dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / yvar_root) * dv_dX
             return ret, grad
-        return objective_and_grad
+        if population:
+            return lambda x_star: tuple([sum(y) / len(y) for y in\
+                    zip(*[objective_and_grad(x_star + training_point) for training_point in x])])
+        else:
+            return objective_and_grad
 
     def acq(x, y):
         fmu, fv = model._raw_predict(np.array([[x, y]]))
@@ -260,7 +218,7 @@ def run(training_x, training_y, test_point, correct_dims=None, plot=False,
         for i in xrange(10):
             objective_and_grad = get_objective_and_grad(test_point)
             opt = find_sparse_intervention(objective_and_grad, test_point,
-                                           x[np.random.randint(0, len(x))])
+                                           x[np.random.randint(0, len(x))], constrained=constrained)
             o, g = objective_and_grad(opt)
             if o > best_o:
                 best_o = o
@@ -330,10 +288,11 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
     np.save(file_prefix + "_initial_vals", initial_vals)
 
     kwargs_set = [dict(), dict(smoothing=True), dict(smoothing=True, sparsity=True),
-                  dict(restarts=True), dict(mean_acq=True)]
+                  dict(restarts=True), dict(mean_acq=True), dict(population=True)]
     for kwargs in kwargs_set:
         print("Running with", kwargs)
         avg_y_gain = []
+        percentile_5_y_gain = []
         std_devs_y = []
         correct_dim_found_count = 0
         f_values = np.zeros((len(var_array), repeat))
@@ -343,13 +302,8 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
             y_gain = []
             for i in xrange(repeat):
                 training_x, training_y = simulation_func(*var_to_tuple(var))
-                if population:
-                    if not constrained:
-                        sys.exit("We do not support unconstrained optimization for populations (yet).")
-                    x_opt = run_population(training_x, training_y)
-                    y_gain.append(simulation_eval(x_opt))
-                    continue
-                test_point = test_points[i]
+                test_point = np.zeros(var if independent_var == "dimension" else dimension)\
+                        if population else test_points[i]
                 if independent_var == "dimension":
                     if 0 in correct_dims:
                         test_point = test_point[:var]
@@ -364,6 +318,7 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
                 f_values[j][i] = final_val
                 y_gain.append(final_val - initial_val)
             avg_y_gain.append(sum(y_gain) / repeat)
+            percentile_5_y_gain.append(np.percentile(y_gain, 5))
             std_devs_y.append(np.std(y_gain))
 
         filename = file_prefix + "".join(['_' + key for key in kwargs])
@@ -378,8 +333,10 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
         plt.xlabel(independent_var)
         plt.ylabel('objective gain')
         plt.xlim(xlim)
-        plt.plot(var_array, avg_y_gain, ls='-', marker='o')
-        plt.hlines(np.average(true_opts - initial_vals), xlim[0], xlim[1], linestyles='dashed')
+        plt.plot(var_array, avg_y_gain, ls='-', color='k', marker='o', markerfacecolor='k')
+        plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', marker='o', markerfacecolor='b')
+        horiz_lines = [np.average(true_opts - initial_vals), np.percentile(true_opts - initial_vals, 5)]
+        plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
         #plt.errorbar(var_array, avg_y_gain, yerr=np.array(std_devs_y))
 
         if file_prefix:
@@ -390,7 +347,7 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
 
 def main():
     # Define constants
-    sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200, 300])
+    sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200])
     dimensions_array = np.arange(2, 16)
     noise_array = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9])
     dimension = 10
@@ -419,8 +376,8 @@ def main():
             constrained = ", constrained=True"
         exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss', {trial}{pop}{constrained})".format(
                 trial=trial, pop=pop, constrained=constrained)
-        exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d', {trial}{pop}{constrained})".format(
-                trial=trial, pop=pop, constrained=constrained)
+        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d', {trial}{pop}{constrained})".format(
+        #        trial=trial, pop=pop, constrained=constrained)
         #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop}{constrained})".format(
         #        trial=trial, pop=pop, constrained=constrained)
 
