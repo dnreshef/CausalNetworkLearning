@@ -2,7 +2,6 @@ import numpy as np
 
 """
 Must use the first k dimensions or the last k dimensions.
-For line and plane, must pass through 0.
 """
 
 def make_func(a):
