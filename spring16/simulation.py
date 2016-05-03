@@ -14,36 +14,30 @@ def make_func(a):
     return func
 
 @make_func
-def _parabola():
-    return (-1, 1), lambda x: 1 - (x[-1] ** 2)
-parabola = (_parabola, lambda x: 1 - x[-1] ** 2, lambda x: 1, np.array([-1]))
-
-@make_func
 def _paraboloid():
     return (-1, 1), lambda x: 1 - (x[-1] ** 2) - (x[-2] ** 2)
 paraboloid = (_paraboloid, lambda x: 1 - x[-2] ** 2 - x[-1] ** 2, lambda x: 1, np.array([-2, -1]))
 
 @make_func
-def _sine():
-    return (-0.5, 3), lambda x: np.sin(x[-1] * np.pi) - 0.5 * x[-1]
-sine = (_sine, lambda x: (np.sin(x[-1] * np.pi) - 0.5 * x[-1]), lambda x: 0.7627, np.array([-1]))
-
-@make_func
 def _line():
-    return (-2, 2), lambda x: x[0]
-line = (_line, lambda x: x[0], lambda x: x[0] + 2, np.array([0])) 
+    return (-1, 1), lambda x: x[0]
+line = (_line, lambda x: x[0], lambda x: x[0] + 1, np.array([0])) 
 
 @make_func
 def _plane():
-    return (-2, 2), lambda x: x[0] + 2 * x[1]
-plane = (_plane, lambda x: x[0] + 2 * x[1], lambda x: x[0] + 2 * x[1] + 6, np.array([0, 1])) 
+    return (-1, 1), lambda x: 0.3 * x[0] + 0.7 * x[1]
+plane = (_plane, lambda x: 0.3 * x[0] + 0.7 * x[1], lambda x: 0.3 * x[0] + 0.7 * x[1] + 1, np.array([0, 1])) 
 
 @make_func
 def _hyperbolic():
     return (-1, 1), lambda x: x[0] * x[1]
-#hyperbola = (_hyperbolic, lambda x: x[0] * x[1],
+hyperbolic = (_hyperbolic, lambda x: x[0] * x[1], lambda x: max(abs(x[0]), abs(x[1])) * 1, np.array([0, 1]))
 
 # Deprecated
+#@make_func
+#def _sine():
+#    return (-0.5, 3), lambda x: np.sin(x[-1] * np.pi) - 0.5 * x[-1]
+#sine = (_sine, lambda x: (np.sin(x[-1] * np.pi) - 0.5 * x[-1]), lambda x: 0.7627, np.array([-1]))
 
 #@make_func
 #def _corrugated_curve():

@@ -47,7 +47,7 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
                          initial,
                          method='L-BFGS-B',
                          jac=True,
-                         bounds=zip(test_point-2,test_point+2),
+                         bounds=zip(test_point-1,test_point+1),
                          options={'disp':False}).x
         else:
             return minimize(objective,
@@ -132,7 +132,7 @@ def gd_soft_threshold(objective_and_grad, center, guess, l, constrained):
         iteration += 1
 
 def run(training_x, training_y, test_point, correct_dims=None, plot=False, population=False,
-        constrained=False, smoothing=False, sparsity=False, restarts=False, mean_acq=False):
+        constrained=False, smoothing=False, sparsity=None, restarts=False, mean_acq=False):
     """
     Runs the intervention optimization routine. A model is trained from
     training_x and training_y, and is used to find a sparse intervention on
@@ -240,7 +240,7 @@ def run(training_x, training_y, test_point, correct_dims=None, plot=False, popul
         objective_and_grad = get_objective_and_grad(test_point)
         opt = find_sparse_intervention(
             objective_and_grad, test_point, current_guess,
-            intervention_dim=len(correct_dims) if sparsity else None, constrained=constrained)
+            intervention_dim=sparsity, constrained=constrained)
         print("Test point will be reinitialized to", opt)
 
         current_guess = opt
@@ -256,7 +256,7 @@ def run(training_x, training_y, test_point, correct_dims=None, plot=False, popul
     return current_guess
 
 def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
-            constrained=False, population=False):
+            constrained=False, hyperbolic=False):
     simulation_func, simulation_eval, true_opt, correct_dims = simulation
 
     independent_var = None
@@ -287,8 +287,14 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
     np.save(file_prefix + "_true_opts", true_opts)
     np.save(file_prefix + "_initial_vals", initial_vals)
 
-    kwargs_set = [dict(), dict(smoothing=True), dict(smoothing=True, sparsity=True),
-                  dict(restarts=True), dict(mean_acq=True), dict(population=True)]
+    if hyperbolic:
+        kwargs_set = [dict(smoothing=True, sparsity=1)]
+    else:
+        kwargs_set = [dict(smoothing=True), dict(smoothing=True, sparsity=correct_dims.size),
+                      dict(restarts=True), dict(mean_acq=True), dict()]
+        if constrained:
+            kwargs_set.append(dict(population=True))
+
     for kwargs in kwargs_set:
         print("Running with", kwargs)
         avg_y_gain = []
@@ -303,7 +309,7 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
             for i in xrange(repeat):
                 training_x, training_y = simulation_func(*var_to_tuple(var))
                 test_point = np.zeros(var if independent_var == "dimension" else dimension)\
-                        if population else test_points[i]
+                        if 'population' in kwargs else test_points[i]
                 if independent_var == "dimension":
                     if 0 in correct_dims:
                         test_point = test_point[:var]
@@ -365,21 +371,22 @@ def main():
         else:
             args.append(arg)
     repeat = int(args[1])
-    pop = ""
-    if "population" in flags:
-        pop = ", population=True"
 
     # Execute trials
     for trial in args[2:]:
         constrained = ""
+        option = ""
         if trial == "plane" or trial == "line":
             constrained = ", constrained=True"
-        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss', {trial}{pop}{constrained})".format(
-                trial=trial, pop=pop, constrained=constrained)
-        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d', {trial}{pop}{constrained})".format(
-        #        trial=trial, pop=pop, constrained=constrained)
-        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{pop}{constrained})".format(
-        #        trial=trial, pop=pop, constrained=constrained)
+        elif trial == "hyperbolic":
+            option = ", hyperbolic=True"
+            constrained = ", constrained=True"
+        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss', {trial}{constrained}{option})".format(
+                trial=trial, constrained=constrained, option=option)
+        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d', {trial}{constrained}{option})".format(
+        #        trial=trial, constrained=constrained, option=option)
+        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{constrained}{option})".format(
+        #        trial=trial, constrained=constrained, option=option)
 
 if __name__ == "__main__":
     main()
