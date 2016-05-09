@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.stats import invwishart
 
 """
 Must use the first k dimensions or the last k dimensions.
@@ -12,10 +13,23 @@ def make_func(a):
         return x, y
     return func
 
+def make_wishart(fx):
+    def func(sample_size, D, noise, df):
+        cov = invwishart.rvs(df, np.identity(D))
+        x = np.random.multivariate_normal(np.zeros(D), cov, sample_size)
+        y = np.apply_along_axis(lambda x: [fx(x) + noise * np.random.standard_normal()], 1, x)
+        return x, y
+    return func
+
 @make_func
 def _paraboloid():
     return (-1, 1), lambda x: 1 - (x[-1] ** 2) - (x[-2] ** 2)
 paraboloid = (_paraboloid, lambda x: 1 - x[-2] ** 2 - x[-1] ** 2, lambda x: 1, np.array([-2, -1]))
+
+@make_wishart
+def _wishart_paraboloid(x):
+    return 1 - (x[-1] ** 2) - (x[-2] ** 2)
+wishart_paraboloid = (_wishart_paraboloid, lambda x: 1 - x[-2] ** 2 - x[-1] ** 2, lambda x: 1, np.array([-2, -1]))
 
 @make_func
 def _line():

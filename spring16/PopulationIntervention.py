@@ -297,6 +297,9 @@ def gradDesSoftThresholdBacktrack(objective_and_grad, objective_nograd, center, 
     # max_iter = maximum number of iterations to run.
     # convergence_thresh = convergence-criterion (stop once improvement in objective falls below convergence_thresh).
     # Returns tuple of: (optimal feature transformation , objective-value).
+    if objective_nograd is None:
+        objective_nograd = lambda x: objective_and_grad(x)[0]
+
     if constraint_bounds is not None:
         upper_bounds = np.array([w[1] if (w[1] is not None) else float('inf') for w in constraint_bounds])
         lower_bounds = np.array([w[0] if (w[0] is not None) else -float('inf') for w in constraint_bounds])
