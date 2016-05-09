@@ -23,69 +23,86 @@ from my_predictive_gradients import my_predictive_gradient
 def sparsePopulationShift(X, model,
                           cardinality = None,
                           constraint_bounds=None,
-                          smoothing_levels = None,
+                          smoothing_levels = (), l = 2.0,
                           eta = 1.0, max_iter = 1e4, convergence_thresh = 1e-9):
     # Runs smoothed version of shift population intervention 
     # with a sparsity constraint, using gradient descent + soft-threholding
     # and binary search to find proper lambda regularization.
+    # Returns tuple: (optimal_shift, optimal_objective_value).
     # model = fitted GP model to training (X, y) pairs.
     # cardinality = number of variables that can be intervened upon, None if there is no constraint
     # constraint_bounds should be list of tuples, one for each dimension indicating the min/max SHIFT allowed, None if there is no constraint.  Set = (0,0) to indicate a feature which is fixed and cannot be transformed. Set = (None, None) for a feature which is unconstrained.
     # smoothing_levels = tuple containing different amounts of smoothing to try out, None if there is no smoothing to be performed.
-    # kernelopt_maxiter = max number of iterations in marginal likelihood optimization to choose kernel hyperparameters.
-    
+    # l = initial maximal regularization penalty to try.
+    # eta, max_iter, convergence_thresh = parameters for gradient method.
     d = X.shape[1] # number of features.
-    if (cardinality is not None) and (cardinality < X.shape[1]):
-        if cardinality <= 0:
-            return (np.zeros(X.shape[1]), 0)
-        l = 10.0 / 2.0 # initial_max
-        current_cardinality = X.shape[1]
-        while (current_cardinality > cardinality): # need more regularization.
-            l *= 2.0
-            opt_diff, obj_val = smoothedPopulationShift(X, model, smoothing_levels = smoothing_levels,
-                                    constraint_bounds=constraint_bounds, l = l,
-                                    eta = eta, max_iter = max_iter, convergence_thresh = convergence_thresh)
-            current_cardinality = X.shape[1] - sum(np.isclose(opt_diff, np.zeros(X.shape[1])))
-        # perform binary search to find right amount of regularization:
-        ub = l
-        lb = 0
-        iteration = 0
-        while not np.isclose(current_cardinality, cardinality):
-            if iteration >= 20: # don't try more than 20 times.
-                print("warning: could not achieve target cardinality")
-                break
-            l = (lb + ub) / 2
-            print("Trying l=", l)
-            opt_diff, obj_val = smoothedPopulationShift(X, model, smoothing_levels = smoothing_levels,
-                                    constraint_bounds=constraint_bounds, l = l,
-                                    eta = eta, max_iter = max_iter, convergence_thresh = convergence_thresh)
-            current_cardinality = X.shape[1] - sum(np.isclose(opt_diff, np.zeros(X.shape[1])))
-
-            if sparsity > intervention_dim:
-                lb = l
-            elif sparsity < intervention_dim:
-                last_dim_diff = x_opt != test_point
-                ub = l
-            else:
-                last_dim_diff = x_opt != test_point
-                break
-            iteration += 1
-
-        selected_features = ? # features which are chosen for optimization.
-        # modify constraint_bounds to ensure not-selected features remain fixed.
-        
-    # Re-run without penalty (or run for the first time if no sparsity desired):
-    if smoothing_levels is not None:
-        return(smoothedPopulationShift(X, model, constraint_bounds, l =0.0, smoothing_levels))
+    # First run without penalty (to get initial solns):
+    init_diff, obj_val = smoothedPopulationShift(X, model, smoothing_levels = smoothing_levels, constraint_bounds=constraint_bounds, l =0.0)
+    print("init_diff:",init_diff)
+    current_cardinality = X.shape[1] - sum(np.isclose(init_diff, np.zeros(X.shape[1])))
+    if (cardinality is None) or (cardinality >= X.shape[1]) or (current_cardinality <= cardinality):
+        return (init_diff, obj_val)
+    if cardinality <= 0:
+        return (np.zeros(X.shape[1]), 0.0)
+    l = l / 2.0 # initial_max
+    while (current_cardinality > cardinality): # need more regularization.
+        l *= 2.0
+        print("Upper l search: Trying l="+ str(l))
+        opt_diff, obj_val = smoothedPopulationShift(X, model, smoothing_levels = smoothing_levels,
+                                constraint_bounds=constraint_bounds, l = l, initial_diff = init_diff, 
+                                eta = eta, max_iter = max_iter, convergence_thresh = convergence_thresh)
+        print("diff:",opt_diff)
+        current_cardinality = X.shape[1] - sum(np.isclose(opt_diff, np.zeros(X.shape[1])))
+        print(opt_diff)
+        print("Current cardinality= " + str(current_cardinality))
+        print(np.isclose(current_cardinality, cardinality))
+    print("Found upper lambda, l=" + str(l))
+    # Perform binary search to find right amount of regularization:
+    ub = l
+    lb = 0
+    iteration = 0
+    while not np.isclose(current_cardinality, cardinality):
+        if iteration >= 20: # don't try more than 20 times, simply chose the largest nonzero terms in this case.
+            break
+        l = (lb + ub) / 2
+        print("Binary search: Trying l="+ str(l))
+        opt_diff, obj_val = smoothedPopulationShift(X, model, smoothing_levels = smoothing_levels,
+                                constraint_bounds=constraint_bounds, l = l, initial_diff = init_diff,
+                                eta = eta, max_iter = max_iter, convergence_thresh = convergence_thresh)
+        current_cardinality = X.shape[1] - sum(np.isclose(opt_diff, np.zeros(X.shape[1])))
+        print("diff:",opt_diff)
+        print("Current cardinality= " + str(current_cardinality))
+        if current_cardinality > cardinality:
+            lb = l
+        elif current_cardinality < cardinality:
+            ub = l
+        iteration += 1
+    selected_features = np.where(np.logical_not(np.isclose(opt_diff, np.zeros(X.shape[1]))))[0] # features which are chosen for optimization.
+    # print("selected_features:"+str(selected_features)+ "  length="+str(len(selected_features)))
+    if not np.isclose(len(selected_features), cardinality):
+        print("warning: could not achieve target cardinality")
+        ordering = np.argsort(-abs(opt_diff))
+        selected_features = ordering[range(cardinality)] # simply choose top entries in this failure case.
+        opt_diff[[z for z in range(X.shape[1]) if z not in selected_features]] = 0.0
+    # Modify constraint_bounds to ensure not-selected features remain fixed at 0.
+    if constraint_bounds is not None:
+        print("a selected_features:"+str(selected_features))
+        sparse_constraints = [constraint_bounds[i] if (i in selected_features) else (0,0) for i in range(X.shape[1])]
     else:
-        return(populationShiftOptimization(X, model, constraint_bounds, l = 0.0))
-    
+        print("b selected_features:"+str(selected_features))
+        sparse_constraints = [(None, None) if (i in selected_features) else (0,0) for i in range(X.shape[1])]
+    return(smoothedPopulationShift(X, model, smoothing_levels = smoothing_levels,
+                                constraint_bounds=sparse_constraints, l = 0.0, initial_diff = opt_diff,
+                                eta = eta, max_iter = max_iter, convergence_thresh = convergence_thresh))
+
 
 
 def smoothedPopulationShift(X, model, smoothing_levels = (),
                             constraint_bounds=None, l = 0.0, initial_diff = None,
                             eta = 1.0, max_iter = 1e4, convergence_thresh = 1e-9):
-    # Performs smoothing + optimization:
+    # Performs smoothing + optimization.
+    # eta, max_iter, convergence_thresh = parameters for gradient method.
+    current_guess = initial_diff 
     if (len(smoothing_levels) >= 1):  # Perform Smoothing (only works for standard GP regression with ARD kernel):
         smoothing_levels = sorted(smoothing_levels, reverse = True)
         orig_lengthscale = model.kern.lengthscale.copy()
@@ -93,7 +110,6 @@ def smoothedPopulationShift(X, model, smoothing_levels = (),
         orig_noise_var = model.likelihood.variance.copy()
         if initial_diff is None: # Set initial guess to zero-shift.
             initial_diff = np.zeros(X.shape[1])
-        current_guess = initial_diff 
         max_features = np.amax(X, axis=0)
         min_features = np.amin(X, axis=0)
         # Add additional constraints during smoothing to ensure we don't go beyond data range:
@@ -116,10 +132,11 @@ def smoothedPopulationShift(X, model, smoothing_levels = (),
                                             eta = eta*5, max_iter = ceil(max_iter/10.0), 
                                             convergence_thresh = convergence_thresh * 10)
                 print(current_guess)
-    # Restore original model:
-    model.kern.lengthscale = orig_lengthscale
-    model.kern.variance = orig_variance
-    model.likelihood.variance = orig_noise_var
+        # Restore original model:
+        model.kern.lengthscale = orig_lengthscale
+        model.kern.variance = orig_variance
+        model.likelihood.variance = orig_noise_var
+        print("Smooth_amt= 1")
     return (populationShiftOptimization(X, model,
                 constraint_bounds=constraint_bounds, l = l, 
                 initial_diff = current_guess, 
@@ -306,10 +323,9 @@ def gradDesSoftThresholdBacktrack(objective_and_grad, objective_nograd, center, 
             if stepsize < convergence_thresh:
                 return (diff + center, o_noreg)
             test_o = objective_nograd(diff - stepsize*grad + center)
-        print("stepsize="+str(stepsize))
+        # print("stepsize="+str(stepsize))
         diff = diff - stepsize*grad # Take gradient step.
         diff = np.sign(diff) * np.maximum(np.abs(diff) - l * stepsize, 0) # soft-threshold
-        # print(diff)
         if constraint_bounds is not None: # project back into constraint-set:
             upper_violations = np.where(diff > upper_bounds)
             lower_violations = np.where(diff < lower_bounds)
