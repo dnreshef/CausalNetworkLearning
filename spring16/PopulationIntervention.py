@@ -117,7 +117,7 @@ def smoothedPopulationUniform(X, model, smoothing_levels = (),
         if constraint_bounds is not None:
             upper_bounds = np.array([w[1] if (w[1] is not None) else float('inf') for w in constraint_bounds])
             lower_bounds = np.array([w[0] if (w[0] is not None) else -float('inf') for w in constraint_bounds])
-            smoothing_constraints = [(max(min_features[i],lower_bounds[i]), min(max_features[i],upper_bounds[i])) for i in range(X.shape[1])]
+            smoothing_constraints = [(max(min_features[i],lower_bounds[i]), max(min_features[i],max(lower_bounds[i],min(max_features[i],upper_bounds[i])))) for i in range(X.shape[1])]
         else:
             smoothing_constraints = [(min_features[i], max_features[i]) for i in range(X.shape[1])]
         for smooth_amt in smoothing_levels:
@@ -454,9 +454,10 @@ def smoothedPopulationShift(X, model, smoothing_levels = (),
         if constraint_bounds is not None:
             upper_bounds = np.array([w[1] if (w[1] is not None) else float('inf') for w in constraint_bounds])
             lower_bounds = np.array([w[0] if (w[0] is not None) else -float('inf') for w in constraint_bounds])
-            smoothing_constraints = [(max(min_features[i],lower_bounds[i]), min(max_features[i],upper_bounds[i])) for i in range(X.shape[1])]
+            smoothing_constraints = [(max(min_features[i],lower_bounds[i]), max(min_features[i],max(lower_bounds[i],min(max_features[i],upper_bounds[i])))) for i in range(X.shape[1])]
         else:
             smoothing_constraints = [(min_features[i], max_features[i]) for i in range(X.shape[1])]
+        print(smoothing_constraints)
         for smooth_amt in smoothing_levels:
             if smooth_amt > 1.0:
                 print("Smooth_amt="+str(smooth_amt))
