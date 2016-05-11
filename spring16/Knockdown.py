@@ -1,9 +1,7 @@
 # Functions For determining which feature value to set to 0
 # and evaluating our model's estimate of the expected outcome change
 # when a particular feature is set to 0.
-# See example at the bottom of this file for how to use:
-
-
+# See example at the bottom of this file for how to use.
 
 from __future__ import print_function
 import numpy as np
@@ -59,6 +57,8 @@ def findBestKnockDown(X, model):
 d = 50; n = 150; noise = 0.2
 simulation_func, simulation_eval, true_opt, correct_dims = paraboloid
 X, y = simulation_func(n,d,noise)
+print("X shape:", X.shape)
+print("y shape:", y.shape)
 kernel = GPy.kern.RBF(X.shape[1], ARD=True)
 model = GPy.models.GPRegression(X, y, kernel)
 model.optimize()
