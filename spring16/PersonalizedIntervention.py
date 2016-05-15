@@ -142,8 +142,8 @@ def smoothedPI(X, model, individual, smoothing_levels = (),
         orig_noise_var = model.likelihood.variance.copy()
         if initial_diff is None: # Set initial guess to zero-shift.
             initial_diff = np.zeros(X.shape[1])
-        max_features = np.amax(X, axis=0)
-        min_features = np.amin(X, axis=0)
+        max_features = np.amax(X, axis=0) - individual # need to subtract off individual.
+        min_features = np.amin(X, axis=0) - individual
         # Add additional constraints during smoothing to ensure we don't go beyond data range:
         if constraint_bounds is not None:
             upper_bounds = np.array([w[1] if (w[1] is not None) else float('inf') for w in constraint_bounds])
