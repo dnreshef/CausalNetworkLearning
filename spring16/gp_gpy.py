@@ -339,30 +339,18 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
                 else:
                     model = train_gp(training_x, training_y)
                     models[model_key] = model
-                D = var if independent_var == "dimension" else dimension
-                test_point = np.zeros(D) if 'population' in kwargs else test_points[i]
+                test_point = test_points[i]
                 if independent_var == "dimension":
                     if 0 in correct_dims:
                         test_point = test_point[:var]
                     else:
                         test_point = test_point[-var:]
-                initial_val = simulation_eval(test_point) if 'population' in kwargs else initial_vals[i]
-                x_opt = None
-                if 'population' in kwargs:
-                    if constrained:
-                        x_opt = sparsePopulationShift(model.X, model, cardinality=correct_dims.size,
-                                                      constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
-                    else:
-                        x_opt = sparsePopulationUniform(model.X, model, cardinality=correct_dims.size,
-                                                      constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
-                else:
-                    x_opt = run(model, test_point, constrained=constrained,
-                                correct_dims=correct_dims, **kwargs)
+                initial_val = initial_vals[i]
+                x_opt = run(model, test_point, constrained=constrained,
+                            correct_dims=correct_dims, **kwargs)
                 if np.all((x_opt != test_point)[correct_dims]):
                     correct_dim_found_count += 1
                 final_val = simulation_eval(x_opt)
-                print(x_opt)
-                print(final_val)
                 f_values[j][i] = final_val
                 y_gain.append(final_val - initial_val)
             avg_y_gain.append(sum(y_gain) / repeat)
@@ -382,14 +370,8 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
         plt.xlim(xlim)
         plt.plot(var_array, avg_y_gain, ls='-', color='k', label='mean gain')
         plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', label='5th percentile gain')
-        iv = None
-        to = None
-        if 'population' in kwargs:
-            iv = np.ones(repeat) * simulation_eval(np.zeros(test_points.shape[1]))
-            to = np.ones(repeat) * true_opt(np.zeros(test_points.shape[1]))
-        else:
-            iv = initial_vals
-            to = true_opts
+        iv = initial_vals
+        to = true_opts
         horiz_lines = [np.average(to - iv), np.percentile(to - iv, 5)]
         plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
         #plt.legend()
@@ -399,6 +381,93 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
         else:
             plt.show()
         plt.close()
+
+def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simulation,
+            constrained=False):
+    simulation_func, simulation_eval, true_opt, correct_dims = simulation
+
+    independent_var = None
+    var_array = None
+    var_to_tuple = None
+
+    if isinstance(dimension, np.ndarray):
+        independent_var = 'dimension'
+        var_array = dimension
+        var_to_tuple = lambda dimension: (sample_size, dimension, noise)
+    elif isinstance(sample_size, np.ndarray):
+        independent_var = 'sample size'
+        var_array = sample_size
+        var_to_tuple = lambda sample_size: (sample_size, dimension, noise)
+    else:
+        sys.exit('Analyze called with incorrect syntax.')
+
+    models = {}
+    avg_y_gain = []
+    percentile_5_y_gain = []
+    std_devs_y = []
+    correct_dim_found_count = 0
+    f_values = np.zeros((len(var_array), repeat))
+
+    for j in xrange(len(var_array)):
+        var = var_array[j]
+        y_gain = []
+        for i in xrange(repeat):
+            training_x = None
+            training_y = None
+            training_x, training_y = simulation_func(*var_to_tuple(var))
+            model_key = str(var) + '_' + str(i)
+            model = None
+            if model_key in models:
+                model = models[model_key]
+            else:
+                model = train_gp(training_x, training_y)
+                models[model_key] = model
+            D = var if independent_var == "dimension" else dimension
+            test_point = np.zeros(D)
+            if independent_var == "dimension":
+                test_point = test_point[:var]
+            initial_val = simulation_eval(test_point)
+            x_opt = None
+            if constrained:
+                x_opt = sparsePopulationShift(model.X, model, cardinality=correct_dims.size,
+                                              constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
+            else:
+                x_opt = sparsePopulationUniform(model.X, model, cardinality=correct_dims.size,
+                                              constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
+            if np.all((x_opt != test_point)[correct_dims]):
+                correct_dim_found_count += 1
+            final_val = simulation_eval(x_opt)
+            f_values[j][i] = final_val
+            y_gain.append(final_val - initial_val)
+        avg_y_gain.append(sum(y_gain) / repeat)
+        percentile_5_y_gain.append(np.percentile(y_gain, 5))
+        std_devs_y.append(np.std(y_gain))
+
+    filename = file_prefix + '_population'
+    np.save(filename, f_values)
+
+    print("Correct intervention dimension was identified in {} out of {} runs."\
+          .format(correct_dim_found_count, len(var_array) * repeat))
+    xlim = (var_array[0] - 0.03 * var_array[-1], var_array[-1] * 1.03)
+    plt.figure()
+    plt.title('Objective gain vs {}'.format(independent_var))
+    plt.xlabel(independent_var)
+    plt.ylabel('objective gain')
+    plt.xlim(xlim)
+    plt.plot(var_array, avg_y_gain, ls='-', color='k', label='mean gain')
+    plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', label='5th percentile gain')
+    test_point = np.zeros(var_array[-1] if independent_var == "dimension" else dimension)
+    iv = np.ones(repeat) * simulation_eval(test_point)
+    to = np.ones(repeat) * true_opt(test_point)
+    horiz_lines = [np.average(to - iv), np.percentile(to - iv, 5)]
+    plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
+    #plt.legend()
+
+    if file_prefix:
+        plt.savefig(filename)
+    else:
+        plt.show()
+    plt.close()
 
 def main():
     # Define constants
@@ -411,9 +480,9 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1][:2] == "--":
         if sys.argv[1][2:] != "population":
             sys.exit("Flag not recognized")
-        repeat = 10
-        analyze(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, [dict(population=True)], constrained=True)
-        analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(population=True)], constrained=True)
+        repeat = 8
+        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, constrained=True)
+        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, constrained=True)
         return
 
     # Execute trials
