@@ -408,18 +408,21 @@ def main():
     sample_size = 100
     noise = 0.2
 
-    repeat = 2
+    if len(sys.argv) > 1 and sys.argv[1][:2] == "--":
+        if sys.argv[1][2:] != "population":
+            sys.exit("Flag not recognized")
+        repeat = 10
+        analyze(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, [dict(population=True)], constrained=True)
+        analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(population=True)], constrained=True)
+        return
 
     # Execute trials
+    repeat = 100
     analyze(sample_size, dimension, noise, repeat, 'plots/wishart_dof', wishart_paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], wishart=True)
-
     analyze(sample_size_array, dimension, noise, repeat, 'plots/hyperbolic_ss', hyperbolic, [dict(smoothing=True, sparsity=1)], constrained=True)
-
     analyze(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()])
-
     analyze(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, [dict(smoothing=True), dict(smoothing=True, sparsity=1), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
-
-    analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict(), dict(population=True)], constrained=True)
+    analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
 
 if __name__ == "__main__":
     main()
