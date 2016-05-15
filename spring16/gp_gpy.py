@@ -9,7 +9,7 @@ from simulation import *
 from plotting import *
 from validation import check_gradient
 from my_predictive_gradients import my_predictive_gradient
-from PopulationIntervention import gradDesSoftThresholdBacktrack
+from PopulationIntervention import gradDesSoftThresholdBacktrack, sparsePopulationShift
 from itertools import compress
 import GPy
 import sys
@@ -60,8 +60,8 @@ def find_sparse_intervention(objective_and_grad, test_point, initial_guess,
 
     if intervention_dim is None:
         return custom_minimize(negative_objective, initial_guess, constraint_bounds, test_point)
-    l = 100.0
 
+    l = 100.0
     last_dim_diff = None
     x_opt = None
     # Initialize upper bound
@@ -152,7 +152,7 @@ def train_gp(training_x, training_y):
     model.optimize()
     return model
 
-def run(model, test_point, correct_dims=None, plot=False, population=False,
+def run(model, test_point, correct_dims=None, plot=False,
         constrained=False, smoothing=False, sparsity=None, restarts=False, mean_acq=False):
     """
     Runs the intervention optimization routine. A model is trained from
@@ -205,11 +205,7 @@ def run(model, test_point, correct_dims=None, plot=False, population=False,
                 yvar_root = 1
             grad = dmu_dX + FIVE_PERCENTILE_ZSCORE * (0.5 / yvar_root) * dv_dX
             return ret, grad
-        if population:
-            return lambda x_star: tuple([sum(y) / len(y) for y in\
-                    zip(*[objective_and_grad(x_star + training_point) for training_point in model.X])])
-        else:
-            return objective_and_grad
+        return objective_and_grad
 
     def acq(x, y):
         fmu, fv = model._raw_predict(np.array([[x, y]]))
@@ -229,7 +225,7 @@ def run(model, test_point, correct_dims=None, plot=False, population=False,
             objective_and_grad = get_objective_and_grad(test_point)
             opt = find_sparse_intervention(objective_and_grad, test_point,
                     model.X[np.random.randint(0, len(model.X))],
-                    constraint_bounds=zip(test_point-1,test_point+1) if constrained else None)
+                    constraint_bounds=zip(test_point-2,test_point+2) if constrained else None)
             o, g = objective_and_grad(opt)
             if o > best_o:
                 best_o = o
@@ -253,13 +249,13 @@ def run(model, test_point, correct_dims=None, plot=False, population=False,
         new_bounds = None
         if i > 1:
             if constrained:
-                low = np.maximum(test_point-1, np.amin(model.X, axis=0))
-                high = np.minimum(test_point+1, np.amax(model.X, axis=0))
+                low = np.maximum(test_point-2, np.amin(model.X, axis=0))
+                high = np.minimum(test_point+2, np.amax(model.X, axis=0))
                 new_bounds = zip(low, high)
             else:
                 new_bounds = zip(np.amin(model.X, axis=0), np.amax(model.X, axis=0))
         elif constrained:
-            new_bounds = zip(test_point-1, test_point+1)
+            new_bounds = zip(test_point-2, test_point+2)
 
         objective_and_grad = get_objective_and_grad(test_point)
         opt = find_sparse_intervention(
@@ -281,7 +277,7 @@ def run(model, test_point, correct_dims=None, plot=False, population=False,
     return current_guess
 
 def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
-            constrained=False, hyperbolic=False, wishart=False):
+            kwargs_set, constrained=False, wishart=False):
     simulation_func, simulation_eval, true_opt, correct_dims = simulation
 
     independent_var = None
@@ -296,10 +292,6 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
         independent_var = 'sample size'
         var_array = sample_size
         var_to_tuple = lambda sample_size: (sample_size, dimension, noise)
-    elif isinstance(noise, np.ndarray):
-        independent_var = 'noise'
-        var_array = noise
-        var_to_tuple = lambda noise: (sample_size, dimension, noise)
     elif wishart:
         independent_var = 'dof'
         var_array = 11 + np.arange(7) * 3
@@ -320,14 +312,6 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
     np.save(file_prefix + "_true_opts", true_opts)
     np.save(file_prefix + "_initial_vals", initial_vals)
 
-    if hyperbolic:
-        kwargs_set = [dict(smoothing=True, sparsity=1)]
-    else:
-        kwargs_set = [dict(smoothing=True), dict(smoothing=True, sparsity=correct_dims.size),
-                      dict(restarts=True), dict(mean_acq=True), dict()]
-        if constrained:
-            kwargs_set.append(dict(population=True))
-
     models = {}
 
     for kwargs in kwargs_set:
@@ -345,7 +329,7 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
                 training_x = None
                 training_y = None
                 if wishart:
-                    training_x, training_y = simulation_func(300, 10, 0.2, var)
+                    training_x, training_y = simulation_func(sample_size, dimension, noise, var)
                 else:
                     training_x, training_y = simulation_func(*var_to_tuple(var))
                 model_key = str(var) + '_' + str(i)
@@ -355,14 +339,13 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
                 else:
                     model = train_gp(training_x, training_y)
                     models[model_key] = model
-                test_point = np.zeros(var if independent_var == "dimension" else dimension)\
-                        if 'population' in kwargs else test_points[i]
+                test_point = test_points[i]
                 if independent_var == "dimension":
                     if 0 in correct_dims:
                         test_point = test_point[:var]
                     else:
                         test_point = test_point[-var:]
-                initial_val = simulation_eval(test_point) if 'population' in kwargs else initial_vals[i]
+                initial_val = initial_vals[i]
                 x_opt = run(model, test_point, constrained=constrained,
                             correct_dims=correct_dims, **kwargs)
                 if np.all((x_opt != test_point)[correct_dims]):
@@ -379,26 +362,19 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
 
         print("Correct intervention dimension was identified in {} out of {} runs."\
               .format(correct_dim_found_count, len(var_array) * repeat))
-        xlim = (0, var_array[-1] * 1.03)
-        plt.figure(num=None, figsize=(6, 6), dpi=80, facecolor='w', edgecolor='k')
-
-        plt.title('objective gain vs {}'.format(independent_var))
+        xlim = (var_array[0] - 0.03 * var_array[-1], var_array[-1] * 1.03)
+        plt.figure()
+        plt.title('Objective gain vs {}'.format(independent_var))
         plt.xlabel(independent_var)
         plt.ylabel('objective gain')
         plt.xlim(xlim)
-        plt.plot(var_array, avg_y_gain, ls='-', color='k', marker='o', markerfacecolor='k')
-        plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', marker='o', markerfacecolor='b')
-        iv = None
-        to = None
-        if 'population' in kwargs:
-            iv = np.ones(repeat) * simulation_eval(np.zeros(test_points.shape[1]))
-            to = np.ones(repeat) * true_opt(np.zeros(test_points.shape[1]))
-        else:
-            iv = initial_vals
-            to = true_opts
+        plt.plot(var_array, avg_y_gain, ls='-', color='k', label='mean gain')
+        plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', label='5th percentile gain')
+        iv = initial_vals
+        to = true_opts
         horiz_lines = [np.average(to - iv), np.percentile(to - iv, 5)]
         plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
-        #plt.errorbar(var_array, avg_y_gain, yerr=np.array(std_devs_y))
+        #plt.legend()
 
         if file_prefix:
             plt.savefig(filename)
@@ -406,45 +382,116 @@ def analyze(sample_size, dimension, noise, repeat, file_prefix, simulation,
             plt.show()
         plt.close()
 
+def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simulation,
+            constrained=False):
+    simulation_func, simulation_eval, true_opt, correct_dims = simulation
+
+    independent_var = None
+    var_array = None
+    var_to_tuple = None
+
+    if isinstance(dimension, np.ndarray):
+        independent_var = 'dimension'
+        var_array = dimension
+        var_to_tuple = lambda dimension: (sample_size, dimension, noise)
+    elif isinstance(sample_size, np.ndarray):
+        independent_var = 'sample size'
+        var_array = sample_size
+        var_to_tuple = lambda sample_size: (sample_size, dimension, noise)
+    else:
+        sys.exit('Analyze called with incorrect syntax.')
+
+    models = {}
+    avg_y_gain = []
+    percentile_5_y_gain = []
+    std_devs_y = []
+    correct_dim_found_count = 0
+    f_values = np.zeros((len(var_array), repeat))
+
+    for j in xrange(len(var_array)):
+        var = var_array[j]
+        y_gain = []
+        for i in xrange(repeat):
+            training_x = None
+            training_y = None
+            training_x, training_y = simulation_func(*var_to_tuple(var))
+            model_key = str(var) + '_' + str(i)
+            model = None
+            if model_key in models:
+                model = models[model_key]
+            else:
+                model = train_gp(training_x, training_y)
+                models[model_key] = model
+            D = var if independent_var == "dimension" else dimension
+            test_point = np.zeros(D)
+            if independent_var == "dimension":
+                test_point = test_point[:var]
+            initial_val = simulation_eval(test_point)
+            x_opt = None
+            if constrained:
+                x_opt = sparsePopulationShift(model.X, model, cardinality=correct_dims.size,
+                                              constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
+            else:
+                x_opt = sparsePopulationUniform(model.X, model, cardinality=correct_dims.size,
+                                              constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
+            if np.all((x_opt != test_point)[correct_dims]):
+                correct_dim_found_count += 1
+            final_val = simulation_eval(x_opt)
+            f_values[j][i] = final_val
+            y_gain.append(final_val - initial_val)
+        avg_y_gain.append(sum(y_gain) / repeat)
+        percentile_5_y_gain.append(np.percentile(y_gain, 5))
+        std_devs_y.append(np.std(y_gain))
+
+    filename = file_prefix + '_population'
+    np.save(filename, f_values)
+
+    print("Correct intervention dimension was identified in {} out of {} runs."\
+          .format(correct_dim_found_count, len(var_array) * repeat))
+    xlim = (var_array[0] - 0.03 * var_array[-1], var_array[-1] * 1.03)
+    plt.figure()
+    plt.title('Objective gain vs {}'.format(independent_var))
+    plt.xlabel(independent_var)
+    plt.ylabel('objective gain')
+    plt.xlim(xlim)
+    plt.plot(var_array, avg_y_gain, ls='-', color='k', label='mean gain')
+    plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', label='5th percentile gain')
+    test_point = np.zeros(var_array[-1] if independent_var == "dimension" else dimension)
+    iv = np.ones(repeat) * simulation_eval(test_point)
+    to = np.ones(repeat) * true_opt(test_point)
+    horiz_lines = [np.average(to - iv), np.percentile(to - iv, 5)]
+    plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
+    #plt.legend()
+
+    if file_prefix:
+        plt.savefig(filename)
+    else:
+        plt.show()
+    plt.close()
+
 def main():
     # Define constants
     sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200])
     dimensions_array = np.arange(2, 16)
-    noise_array = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9])
     dimension = 10
     sample_size = 100
     noise = 0.2
 
-    if len(sys.argv) <= 2:
-        sys.exit('Usage: ./gp_gpy.py runs simulation1 simulation2 ...')
-    # Parse options
-    flags = set()
-    args = []
-    for arg in sys.argv:
-        if arg[:2] == "--":
-            flags.add(arg[2:])
-        else:
-            args.append(arg)
-    repeat = int(args[1])
+    if len(sys.argv) > 1 and sys.argv[1][:2] == "--":
+        if sys.argv[1][2:] != "population":
+            sys.exit("Flag not recognized")
+        repeat = 8
+        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, constrained=True)
+        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, constrained=True)
+        return
 
     # Execute trials
-    for trial in args[2:]:
-        if trial == "wishart_paraboloid":
-            analyze(sample_size, dimension, noise, repeat, 'plots/wishart_dof', wishart_paraboloid, wishart=True)
-            continue
-        constrained = ""
-        option = ""
-        if trial == "plane" or trial == "line":
-            constrained = ", constrained=True"
-        elif trial == "hyperbolic":
-            option = ", hyperbolic=True"
-            constrained = ", constrained=True"
-        exec "analyze(sample_size_array, dimension, noise, repeat, 'plots/{trial}_ss', {trial}{constrained}{option})".format(
-                trial=trial, constrained=constrained, option=option)
-        #exec "analyze(sample_size, dimensions_array, noise, repeat, 'plots/{trial}_d', {trial}{constrained}{option})".format(
-        #        trial=trial, constrained=constrained, option=option)
-        #exec "analyze(sample_size, dimension, noise_array, repeat, 'plots/{trial}_n.png', {trial}{constrained}{option})".format(
-        #        trial=trial, constrained=constrained, option=option)
+    repeat = 100
+    analyze(sample_size, dimension, noise, repeat, 'plots/wishart_dof', wishart_paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], wishart=True)
+    analyze(sample_size_array, dimension, noise, repeat, 'plots/hyperbolic_ss', hyperbolic, [dict(smoothing=True, sparsity=1)], constrained=True)
+    analyze(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()])
+    analyze(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, [dict(smoothing=True), dict(smoothing=True, sparsity=1), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
+    analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
 
 if __name__ == "__main__":
     main()
