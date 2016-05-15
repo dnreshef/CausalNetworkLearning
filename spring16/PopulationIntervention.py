@@ -14,11 +14,14 @@ from math import ceil
 from my_predictive_gradients import my_predictive_gradient
 
 # Example usage:
-# X, y = simulation_func(*var_to_tuple(var))# y = y.flatten()
-# kernel = GPy.kern.RBF(D, ARD=True)
+# d = 5; n = 100; noise = 0.2
+# simulation_func, simulation_eval, true_opt, correct_dims = paraboloid
+# X, y = simulation_func(n,d,noise)
+# kernel = GPy.kern.RBF(d, ARD=True)
 # model = GPy.models.GPRegression(X, y, kernel)
 # model.optimize(max_iters=1e4)
-# result =  sparsePopulationShift(X, y, model, cardinality = 1, constraint_bounds=, smoothing_levels = (4,3,2,1))
+# result =  sparsePopulationUniform(X, model, cardinality = 2, constraint_bounds=None, smoothing_levels = (4,3,2,1))
+# result =  sparsePopulationUniform(X, model, cardinality = 2, constraint_bounds=None, smoothing_levels = ())
 # results = populationShiftOptimization(X, model, constraint_bounds=None, l = 0.0))
 
 
@@ -45,13 +48,16 @@ def sparsePopulationUniform(X, model, cardinality = None,
     for iter in range(cardinality): # use greedy forward selection to select intervention indices:
         current_best = 0.0
         for feat in remaining_features:
-            test_int_indices = list(int_indices) #copy
+            test_int_indices = list(int_indices) # new copy
+            test_int_indices.append(feat)
             test_int, test_objval = smoothedPopulationUniform(X, model, 
-                                        int_indices=test_int_indices.append(feat), smoothing_levels=smoothing_levels,
+                                        int_indices=test_int_indices, smoothing_levels=smoothing_levels,
                                         constraint_bounds=constraint_bounds)
+            #print(feat, test_objval, test_int, int_indices)
             if test_objval > current_best:
                 current_best = test_objval
                 best_feature = feat
+        #print(best_feature)
         int_indices.append(best_feature)
         remaining_features.remove(best_feature)
     return(smoothedPopulationUniform(X, model, 
@@ -121,10 +127,10 @@ def populationUniformOptimization(x, model, int_indices = None,
     
     def populationMaskedUniformObj(unif_intervention): # Only returns objective (when unif_intervention is masked vector)
         n, d = x.shape
-        # int_indices = np.where(np.logical_not(unif_intervention.mask))[0] # features we're setting.
         transformed_pop = x.copy()
         if len(int_indices) > 0:
             transformed_pop[:, int_indices] = unif_intervention[int_indices] # set values according to uniform intervention.
+            # print(transformed_pop[range(3),1])
         else:
             return 0.0
         all_pts = np.vstack((x, transformed_pop))
@@ -152,7 +158,8 @@ def populationUniformOptimization(x, model, int_indices = None,
                         options={'disp':False})
         diff_opt = opt_res.x
         objective_val = opt_res.fun
-        unif_opt = ma.masked_array(diff_opt, mask=mask)
+    unif_opt = ma.masked_array(diff_opt, mask=mask)
+    # print(unif_opt)
     return unif_opt, abs(objective_val)
 
 
