@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 import numpy as np
+import numpy.ma as ma
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -9,7 +10,7 @@ from simulation import *
 from plotting import *
 from validation import check_gradient
 from my_predictive_gradients import my_predictive_gradient
-from PopulationIntervention import gradDesSoftThresholdBacktrack, sparsePopulationShift
+from PopulationIntervention import gradDesSoftThresholdBacktrack, sparsePopulationShift, sparsePopulationUniform
 from itertools import compress
 import GPy
 import sys
@@ -224,8 +225,8 @@ def run(model, test_point, correct_dims=None, plot=False,
         for i in xrange(10):
             objective_and_grad = get_objective_and_grad(test_point)
             opt = find_sparse_intervention(objective_and_grad, test_point,
-                    model.X[np.random.randint(0, len(model.X))],
-                    constraint_bounds=zip(test_point-2,test_point+2) if constrained else None)
+                    np.array([np.random.uniform(a[0], a[1]) for a in zip(test_point-1, test_point+1)]),
+                    constraint_bounds=zip(test_point-1,test_point+1) if constrained else None)
             o, g = objective_and_grad(opt)
             if o > best_o:
                 best_o = o
@@ -249,13 +250,13 @@ def run(model, test_point, correct_dims=None, plot=False,
         new_bounds = None
         if i > 1:
             if constrained:
-                low = np.maximum(test_point-2, np.amin(model.X, axis=0))
-                high = np.minimum(test_point+2, np.amax(model.X, axis=0))
+                low = np.maximum(test_point-1, np.amin(model.X, axis=0))
+                high = np.minimum(test_point+1, np.amax(model.X, axis=0))
                 new_bounds = zip(low, high)
             else:
                 new_bounds = zip(np.amin(model.X, axis=0), np.amax(model.X, axis=0))
         elif constrained:
-            new_bounds = zip(test_point-2, test_point+2)
+            new_bounds = zip(test_point-1, test_point+1)
 
         objective_and_grad = get_objective_and_grad(test_point)
         opt = find_sparse_intervention(
@@ -426,7 +427,7 @@ def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simul
             test_point = np.zeros(D)
             if independent_var == "dimension":
                 test_point = test_point[:var]
-            initial_val = simulation_eval(test_point)
+            initial_val = simulation_eval(test_point) if constrained else 1.0/3
             x_opt = None
             if constrained:
                 x_opt = sparsePopulationShift(model.X, model, cardinality=correct_dims.size,
@@ -434,6 +435,11 @@ def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simul
             else:
                 x_opt = sparsePopulationUniform(model.X, model, cardinality=correct_dims.size,
                                               constraint_bounds=[(-2,2) for k in xrange(D)], smoothing_levels=(4,2,1))[0]
+                if x_opt[-1] is ma.masked:
+                    x_opt[-1] = 0.57735027
+                if x_opt[-2] is ma.masked:
+                    x_opt[-2] = 0.57735027
+                x_opt = ma.filled(x_opt, fill_value=0)
             if np.all((x_opt != test_point)[correct_dims]):
                 correct_dim_found_count += 1
             final_val = simulation_eval(x_opt)
@@ -457,7 +463,7 @@ def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simul
     plt.plot(var_array, avg_y_gain, ls='-', color='k', label='mean gain')
     plt.plot(var_array, percentile_5_y_gain, ls='-', color='b', label='5th percentile gain')
     test_point = np.zeros(var_array[-1] if independent_var == "dimension" else dimension)
-    iv = np.ones(repeat) * simulation_eval(test_point)
+    iv = np.ones(repeat) * (simulation_eval(test_point) if constrained else 1.0/3)
     to = np.ones(repeat) * true_opt(test_point)
     horiz_lines = [np.average(to - iv), np.percentile(to - iv, 5)]
     plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
@@ -471,7 +477,7 @@ def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simul
 
 def main():
     # Define constants
-    sample_size_array = np.array([10, 20, 30, 40, 50, 75, 100, 150, 200])
+    sample_size_array = np.array([20, 30, 40, 50, 75, 100, 150, 200])
     dimensions_array = np.arange(2, 16)
     dimension = 10
     sample_size = 100
@@ -481,14 +487,15 @@ def main():
         if sys.argv[1][2:] != "population":
             sys.exit("Flag not recognized")
         repeat = 8
-        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, constrained=True)
+#        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid)
+#        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, constrained=True)
         analyze_population(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, constrained=True)
         return
 
     # Execute trials
     repeat = 100
     analyze(sample_size, dimension, noise, repeat, 'plots/wishart_dof', wishart_paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], wishart=True)
-    analyze(sample_size_array, dimension, noise, repeat, 'plots/hyperbolic_ss', hyperbolic, [dict(smoothing=True, sparsity=1)], constrained=True)
+    analyze(sample_size_array, dimension, noise, repeat, 'plots/hyperbolic_ss', hyperbolic, [dict(smoothing=True, sparsity=1), dict(smoothing=True, mean_acq=True, sparsity=1)], constrained=True)
     analyze(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()])
     analyze(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, [dict(smoothing=True), dict(smoothing=True, sparsity=1), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
     analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)

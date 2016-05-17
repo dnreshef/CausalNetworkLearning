@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import cm
@@ -89,3 +90,35 @@ def plot_data(x_data, y_data, dimension):
     plt.figure()
     plt.plot(x_data[:,-1].flatten(), y_data, ls='None', marker='+')
     plt.show()
+
+def main():
+    prefix = 'plots/plane_ss'
+    no_smoothing = np.load(prefix + '.npy')[:6,:]
+    smoothing = np.load(prefix + '_smoothing.npy')[:6,:]
+    restarts = np.load(prefix + '_restarts.npy')[:6,:]
+    initial_vals = np.load(prefix + '_initial_vals.npy')
+    true_opts = np.load(prefix + '_true_opts.npy')
+
+    var_array = np.array([20, 30, 40, 50, 75, 100])
+
+    xlim = (var_array[0] - 0.03 * var_array[-1], var_array[-1] * 1.03)
+    plt.figure()
+    plt.title('Objective gain vs sample size')
+    plt.xlabel('sample_size')
+    plt.ylabel('objective gain')
+    plt.xlim(xlim)
+    for name in ['no_smoothing', 'smoothing', 'restarts']:
+        f_values = eval(name)
+        avg_y_gain = np.apply_along_axis(lambda x: sum(x - initial_vals) / len(x), 1, f_values)
+        percentile_5_y_gain = np.apply_along_axis(lambda x: np.percentile(x - initial_vals, 5), 1, f_values)
+        plt.plot(var_array, avg_y_gain, ls='-', label=name+' mean')
+        plt.plot(var_array, percentile_5_y_gain, ls='-', label=name+' 5th percentile')
+    iv = initial_vals
+    to = true_opts
+    horiz_lines = [np.average(to - iv), np.percentile(to - iv, 5)]
+    plt.hlines(horiz_lines, xlim[0], xlim[1], colors=['k', 'b'], linestyles='dashed')
+    plt.legend(loc=0,prop={'size':10})
+    plt.savefig(prefix + '_aggregate')
+
+if __name__ == "__main__":
+    main()
