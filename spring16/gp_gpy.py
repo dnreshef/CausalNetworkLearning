@@ -486,9 +486,10 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1][:2] == "--":
         if sys.argv[1][2:] != "population":
             sys.exit("Flag not recognized")
-        for i in xrange(100):
-#        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid)
-#        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, constrained=True)
+        seed = int(sys.argv[2]) * 100
+        for i in xrange(seed, seed+100):
+#           analyze_population(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid)
+#           analyze_population(sample_size_array, dimension, noise, 1, 'plots/line_ss' + str(i), line, constrained=True)
             analyze_population(sample_size_array, dimension, noise, 1, 'plots/plane_ss' + str(i), plane, constrained=True)
         return
 
