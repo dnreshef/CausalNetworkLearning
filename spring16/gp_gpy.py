@@ -478,7 +478,7 @@ def analyze_population(sample_size, dimension, noise, repeat, file_prefix, simul
 def main():
     # Define constants
     sample_size_array = np.array([20, 30, 40, 50, 75, 100, 150, 200])
-    dimensions_array = np.arange(2, 16)
+    dimensions_array = np.arange(1, 10) * 2
     dimension = 10
     sample_size = 100
     noise = 0.2
@@ -486,19 +486,19 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1][:2] == "--":
         if sys.argv[1][2:] != "population":
             sys.exit("Flag not recognized")
-        repeat = 8
+        for i in xrange(100):
 #        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid)
 #        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, constrained=True)
-        analyze_population(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, constrained=True)
+            analyze_population(sample_size_array, dimension, noise, 1, 'plots/plane_ss' + str(i), plane, constrained=True)
         return
 
     # Execute trials
     repeat = 100
-    analyze(sample_size, dimension, noise, repeat, 'plots/wishart_dof', wishart_paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], wishart=True)
-    analyze(sample_size_array, dimension, noise, repeat, 'plots/hyperbolic_ss', hyperbolic, [dict(smoothing=True, sparsity=1), dict(smoothing=True, mean_acq=True, sparsity=1)], constrained=True)
-    analyze(sample_size_array, dimension, noise, repeat, 'plots/paraboloid_ss', paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()])
-    analyze(sample_size_array, dimension, noise, repeat, 'plots/line_ss', line, [dict(smoothing=True), dict(smoothing=True, sparsity=1), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
-    analyze(sample_size_array, dimension, noise, repeat, 'plots/plane_ss', plane, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
+    #analyze(sample_size, dimension, noise, repeat, 'plots/wishart_dof', wishart_paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], wishart=True)
+    #analyze(sample_size, dimensions_array, noise, repeat, 'plots/hyperbolic_ss', hyperbolic, [dict(smoothing=True, sparsity=1), dict(smoothing=True, mean_acq=True, sparsity=1)], constrained=True)
+    analyze(sample_size, dimensions_array, noise, repeat, 'plots/paraboloid_ss', paraboloid, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()])
+    analyze(sample_size, dimensions_array, noise, repeat, 'plots/line_ss', line, [dict(smoothing=True), dict(smoothing=True, sparsity=1), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
+    analyze(sample_size, dimensions_array, noise, repeat, 'plots/plane_ss', plane, [dict(smoothing=True), dict(smoothing=True, sparsity=2), dict(restarts=True), dict(mean_acq=True), dict()], constrained=True)
 
 if __name__ == "__main__":
     main()
